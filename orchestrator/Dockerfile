@@ -1,6 +1,9 @@
 # Используем Python 3.9 slim
 FROM python:3.9-slim
 
+# Вставьте ниже свой токен
+ENV HF_TOKEN=""
+
 # Системные зависимости
 RUN apt-get update && apt-get install -y \
     build-essential \
@@ -23,5 +26,19 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Скрипт для запуска пайплайна
 RUN chmod +x /app/orchestrator/run_pipeline.sh
 
-# По умолчанию запускаем пайплайн
-CMD ["/app/orchestrator/run_pipeline.sh"]
+# Точка входа - наш скрипт
+ENTRYPOINT ["/app/orchestrator/run_pipeline.sh"]
+
+# Информация о том, как использовать
+CMD ["--help"]
+
+# # 1. Сборка образа
+# cd /home/user/wav-parser
+# docker build -t wav-parse -f orchestrator/Dockerfile . --no-cache
+
+# # 2. Указание конкретных путей
+# docker run --rm \
+#   -v $(pwd)/audio/tracks:/input \
+#   -v $(pwd)/audio/clips:/music \
+#   -v $(pwd)/audio \
+#   wav-parse /input /music /output
