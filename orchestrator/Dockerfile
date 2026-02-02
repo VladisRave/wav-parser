@@ -2,7 +2,7 @@
 FROM python:3.9-slim
 
 # Вставьте ниже свой токен
-ENV HF_TOKEN=""
+ENV HF_TOKEN="ENTER YOUR API KEY"
 
 # Системные зависимости
 RUN apt-get update && apt-get install -y \
@@ -38,7 +38,10 @@ CMD ["--help"]
 
 # # 2. Указание конкретных путей
 # docker run --rm \
-#   -v $(pwd)/audio/tracks:/input \
-#   -v $(pwd)/audio/clips:/music \
-#   -v $(pwd)/audio \
-#   wav-parse /input /music /output
+#   -v /home/user/papkamusik/archive:/input \
+#   -v /home/user/papkamusik/results:/output \
+#   wav-parse \
+#   /input /app/clips /output
+
+# или если жестко привязать пути то
+# docker run --rm wav-parse
