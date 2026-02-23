@@ -1,0 +1,14 @@
+version: "3.9"
+services:
+  wav_pipeline:
+    build: ./orchestrator
+    container_name: wav_pipeline
+    volumes:
+      - ./audio:/home/user/WAV-Parser/audio
+      - ./services:/home/user/WAV-Parser/services
+      - ./common:/home/user/WAV-Parser/common
+      - ./requirements.txt:/home/user/WAV-Parser/requirements.txt
+    environment:
+      - PYTHONUNBUFFERED=1
+    stdin_open: true
+    tty: true
