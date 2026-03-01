@@ -7,7 +7,7 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
 # ====== Импортируем хэширование файлов ======
-from hash_gen import FileHasher
+from hash_generator import FileHasher
 
 def parse_args():
     parser = argparse.ArgumentParser("Voice params service")
