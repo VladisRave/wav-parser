@@ -14,6 +14,7 @@ INPUT_DIR=/input                # Задайте жестко путь на ва
 MUSIC_DIR=/app/audio/clips      # Файл находится в образе позже будет сделан так чтобы можно было все задавать в образе
 OUTPUT_ROOT=/output             # Задайте жестко путь на вашем сервере чтобы все работало исправно
 
+start_total=$SECONDS
 
 # Проверка существования входных директорий
 for dir in "$INPUT_DIR" "$MUSIC_DIR"; do
@@ -58,6 +59,7 @@ echo ""
 # Шаг 1: Удаление музыки
 echo "ШАГ 1: УДАЛЕНИЕ МУЗЫКИ"
 
+start_step=$SECONDS
 if ! python3 "$SERVICES_DIR/music_removal/main.py" \
     --input "$INPUT_DIR" \
     --music_dir "$MUSIC_DIR" \
@@ -68,6 +70,8 @@ fi
 
 CLEAN_FILES=$(find "$CLEAN_AUDIO_DIR" -type f -name "*.wav" | wc -l)
 echo "Шаг 1 завершен. Обработано файлов: $CLEAN_FILES"
+step_time=$((SECONDS - start_step))
+echo "Шаг 1 выполнен за ${step_time} сек"
 
 # Проверка наличия файлов после первого шага
 if [ "$CLEAN_FILES" -eq 0 ]; then
@@ -78,7 +82,7 @@ fi
 
 # Шаг 2: Шумоподавление
 echo "ШАГ 2: ШУМОПОДАВЛЕНИЕ"
-
+start_step=$SECONDS
 if ! python3 "$SERVICES_DIR/denoise/main.py" \
     --input "$CLEAN_AUDIO_DIR" \
     --output "$FILT_AUDIO_DIR"; then
@@ -89,11 +93,13 @@ fi
 FILT_FILES=$(find "$FILT_AUDIO_DIR" -type f -name "*.wav" | wc -l)
 echo ""
 echo "Шаг 2 завершен. Обработано файлов: $FILT_FILES"
+step_time=$((SECONDS - start_step))
+echo "Шаг 2 выполнен за ${step_time} сек"
 
 # Шаг 3: Диаризация
 echo "ШАГ 3: ДИАРИЗАЦИЯ"
 echo ""
-
+start_step=$SECONDS
 if ! python3 "$SERVICES_DIR/diarization/main.py" \
     --input "$FILT_AUDIO_DIR" \
     --output "$RESULT_DIR"; then
@@ -103,11 +109,13 @@ fi
 
 RESULT_FILES=$(find "$RESULT_DIR" -type f -name "*.wav" | wc -l)
 echo "Шаг 3 завершен. Обработано файлов: $RESULT_FILES"
+step_time=$((SECONDS - start_step))
+echo "Шаг 3 выполнен за ${step_time} сек"
 
 # Шаг 4: Выделение признаков
 echo "ШАГ 3: ДИАРИЗАЦИЯ"
 echo ""
-
+start_step=$SECONDS
 if ! python3 "$SERVICES_DIR/voice_params/main.py" \
     --input "$RESULT_DIR" \
     --output "$RESULT_DIR"; then
@@ -117,8 +125,12 @@ fi
 
 RESULT_FILES=$(find "$RESULT_DIR" -type f -name "*.wav" | wc -l)
 echo "Шаг 4 завершен. Обработано файлов: $RESULT_FILES"
-
+step_time=$((SECONDS - start_step))
+echo "Шаг 4 выполнен за ${step_time} сек"
 echo ""
+
+total_time=$((SECONDS - start_total))
+echo "Общее время выполнения: ${total_time} сек"
 
 # Итоговая статистика
 echo "======================================="

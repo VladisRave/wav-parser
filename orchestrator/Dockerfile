@@ -38,9 +38,9 @@ CMD ["--help"]
 
 # # 2. Указание конкретных путей
 # docker run --rm \
-#   -v /home/user/papkamusik/archive:/input \
+#   -v /home/user/papkamusik/start:/input \
 #   -v /home/user/papkamusik/results:/output \
-#   wav-parse \
+#   first-parse \
 #   /input /app/clips /output
 
 # или если жестко привязать пути то

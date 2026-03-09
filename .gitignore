@@ -1,1 +1,4 @@
-description.txt
+/services/voice_params/__pycache__
+/services/music_removal/__pycache__
+/services/diarization/__pycache__
+/services/denoise/__pycache__
