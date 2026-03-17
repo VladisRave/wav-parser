@@ -34,7 +34,7 @@ ENTRYPOINT ["/app/orchestrator/run_pipeline.sh"]
 
 # # 1. Сборка образа
 # cd /home/user/wav-parser
-# docker build -t wav-parse -f orchestrator/Dockerfile . --no-cache
+# docker build -t audio_parser -f orchestrator/Dockerfile . --no-cache
 
 # # 2. Указание конкретных путей
 # docker run --rm \
