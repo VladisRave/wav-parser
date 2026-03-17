@@ -4,7 +4,7 @@ from typing import Dict, List
 
 @dataclass
 class Subtitle:
-    """Одна субтитра с тайм-кодами и текстом."""
+    """Один субтитр с тайм-кодами и текстом."""
     index: int
     start_sec: float
     end_sec: float

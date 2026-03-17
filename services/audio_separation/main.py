@@ -58,4 +58,4 @@ if __name__ == "__main__":
 
 
 # Для всей папки
-# python services/audio_separation/main.py --input audio/sound --output audio/sound
+# python services/audio_separation/main.py --input audio/tracks --output audio/tracks

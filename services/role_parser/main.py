@@ -83,4 +83,4 @@ if __name__ == "__main__":
 
 
 # Для всей папки
-# python services/role_parser/main.py --input audio/sound --output audio/sound
+# python services/role_parser/main.py --input audio/tracks --output audio/tracks

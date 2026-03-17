@@ -97,4 +97,4 @@ if __name__ == "__main__":
 
 
 # Для всей папки
-# python services/voice_params/main.py --input audio/sound --output audio/sound
+# python services/voice_params/main.py --input audio/tracks --output audio/tracks

@@ -80,11 +80,26 @@ def main():
 
     for file_path in files_to_process:
         print(f"\nОбработка: {file_path}")
+        
         try:
             y_full, sr = librosa.load(file_path, sr=None, mono=True)
         except Exception as e:
             print(f"Ошибка загрузки {file_path}: {e}")
             continue
+
+        # ==============================
+        # ПРОВЕРКА ДЛИНЫ АУДИО
+        # ==============================
+        audio_duration = len(y_full) / sr
+
+        if audio_duration < 10.0:
+            print(f"⏭ Пропуск файла (длина {audio_duration:.2f} сек < 10 сек): {file_path}")
+            continue
+
+
+        # ==============================
+        # ДАЛЬШЕ ОБРАБАТЫВАЕМ ТОЛЬКО НОРМАЛЬНЫЕ ФАЙЛЫ
+        # ==============================
 
         win_sec = 3.0
         overlap = 0.33
@@ -130,13 +145,21 @@ def main():
         merged = merge_time_intervals(all_intervals)
         print(f"Всего найдено музыкальных блоков: {len(merged)}")
 
-        # Имя файла без пути и расширения
+        # ==============================
+        # СОЗДАЁМ ПАПКУ ТОЛЬКО ТУТ
+        # ==============================
         base_name = os.path.splitext(os.path.basename(file_path))[0]
 
-        # ЕСЛИ МУЗЫКА НАЙДЕНА
-        if merged:
-            output_file = os.path.join(args.output, f"{base_name}_clean.wav")
+        file_output_dir = os.path.join(args.output, base_name)
+        os.makedirs(file_output_dir, exist_ok=True)
 
+        output_file = os.path.join(file_output_dir, f"{base_name}.wav")
+
+        # ==============================
+        # СОХРАНЕНИЕ
+        # ==============================
+
+        if merged:
             replace_music_with_silence(
                 y_full=y_full,
                 sr=sr,
@@ -145,14 +168,9 @@ def main():
                 pre_music_sec=args.pre_music_sec,
                 silence_duration=args.silence_duration
             )
-
             print(f"Музыка найдена. Файл сохранён как: {output_file}")
-
-        # ЕСЛИ МУЗЫКИ НЕТ
         else:
-            output_file = os.path.join(args.output, f"{base_name}.wav")
             sf.write(output_file, y_full, sr)
-
             print(f"Музыка не найдена. Файл сохранён как: {output_file}")
 
 
@@ -166,6 +184,6 @@ if __name__ == "__main__":
 # --output /home/user/wav-parser/audio/tracks
 
 # Код для запуска обработки папки
-# python ./services/music_removal/main.py --input /home/user/wav-parser/audio/tracks/ \
+# python services/music_removal/main.py --input /home/user/papkamusik/gg \
 # --music_dir /home/user/wav-parser/audio/clips/ \
-# --output /home/user/wav-parser/audio/clean_audio
+# --output /home/user/wav-parser/audio/tracks

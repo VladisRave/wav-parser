@@ -1,7 +1,7 @@
 from pathlib import Path
 import shutil
 
-AUDIO_EXTENSIONS = [".wav", ".mp3", ".m4a", ".flac"]
+AUDIO_EXTENSIONS = [".wav", ".mp3"]
 OUTPUT_EXTENSIONS = [".txt", ".srt", ".wav", ".json"]  # файлы, которые мы хотим собрать
 
 def find_audio_files(input_path: Path):

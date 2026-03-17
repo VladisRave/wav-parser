@@ -4,9 +4,7 @@ import soundfile as sf
 import scipy.signal as sps
 
 
-# ===============================
 # Фильтры и усиление
-# ===============================
 
 def highpass_filter(y, sr, cutoff=70, order=4):
     """Удаляем низкочастотный гул (можно менять cutoff)."""

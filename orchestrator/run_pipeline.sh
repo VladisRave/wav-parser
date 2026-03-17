@@ -15,23 +15,23 @@ echo "Старт"
 
 # CHECKING
 if [ ! -d "$INPUT_DIR" ]; then
-    echo "❌ Нет INPUT_DIR: $INPUT_DIR"
+    echo "Нет INPUT_DIR: $INPUT_DIR"
     exit 1
 fi
 
 if [ ! -d "$MUSIC_DIR" ]; then
-    echo "❌ Нет MUSIC_DIR: $MUSIC_DIR"
+    echo "Нет MUSIC_DIR: $MUSIC_DIR"
     exit 1
 fi
 
 if [ "$INPUT_FILES" -eq 0 ]; then
-    echo "❌ Нет MP3 файлов"
+    echo "Нет MP3 файлов"
     exit 1
 fi
 
 echo "Найдено файлов: $INPUT_FILES"
 
-# 1. MUSIC REMOVAL
+# 1. MUSIC REMOVAL запуск обработчика
 echo "Шаг 1: Удаление музыки"
 start_step=$SECONDS
 
@@ -62,25 +62,36 @@ python3 "$SERVICES_DIR/diarization/main.py" \
 
 step_time_3=$((SECONDS - start_step))
 
-# 4. AUDIO SEPARATION
-echo "Шаг 4: Разделение аудио"
+# 4. LLM USAGE
+echo "Шаг 4: Определение ролей в аудио"
+start_step=$SECONDS
+
+python3 "$SERVICES_DIR/role_parser/main.py" \
+    --input "$OUTPUT_DIR" \
+    --output "$OUTPUT_DIR"
+
+step_time_4=$((SECONDS - start_step))
+
+
+# 5. AUDIO SEPARATION
+echo "Шаг 5: Разделение аудио"
 start_step=$SECONDS
 
 python3 "$SERVICES_DIR/audio_separation/main.py" \
     --input "$OUTPUT_DIR" \
     --output "$OUTPUT_DIR"
 
-step_time_4=$((SECONDS - start_step))
+step_time_5=$((SECONDS - start_step))
 
-# 5. VOICE PARAMS
-echo "Шаг 5: Признаки голоса"
+# 6. VOICE PARAMS
+echo "Шаг 6: Признаки голоса"
 start_step=$SECONDS
 
 python3 "$SERVICES_DIR/voice_params/main.py" \
     --input "$OUTPUT_DIR" \
     --output "$OUTPUT_DIR"
 
-step_time_5=$((SECONDS - start_step))
+step_time_6=$((SECONDS - start_step))
 
 # FINAL
 total_time=$((SECONDS - start_total))
@@ -93,6 +104,7 @@ echo " Шаг 2 занял: ${step_time_2} сек"
 echo " Шаг 3 занял: ${step_time_3} сек"
 echo " Шаг 4 занял: ${step_time_4} сек"
 echo " Шаг 5 занял: ${step_time_5} сек"
+echo " Шаг 6 занял: ${step_time_6} сек"
 echo " ------------------------------ "
 echo " Общее время: ${total_time} сек"
 
