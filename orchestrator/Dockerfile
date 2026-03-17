@@ -1,8 +1,4 @@
-# Используем Python 3.9 slim
-FROM python:3.9-slim
-
-# Вставьте ниже свой токен
-ENV HF_TOKEN="ENTER YOUR API KEY"
+FROM python:3.10-slim
 
 # Системные зависимости
 RUN apt-get update && apt-get install -y \
@@ -10,27 +6,31 @@ RUN apt-get update && apt-get install -y \
     ffmpeg \
     libsndfile1 \
     git \
+    cython3 \
     && rm -rf /var/lib/apt/lists/*
 
-# Рабочая директория
 WORKDIR /app
 
-# Копируем код и requirements
+# ВАЖНО: копируем ВСЁ (включая .git если нужно)
 COPY . /app
-COPY requirements.txt /app/requirements.txt
 
-# Установка зависимостей
+# Инициализация submodules
+RUN git submodule update --init --recursive
+
+# pip
 RUN pip install --no-cache-dir --upgrade pip
+
+# Основные зависимости
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Скрипт для запуска пайплайна
+# Внешний репозиторий
+RUN pip install --no-cache-dir -r external/whisper-diarization/requirements.txt
+
+# Скрипт
 RUN chmod +x /app/orchestrator/run_pipeline.sh
 
-# Точка входа - наш скрипт
 ENTRYPOINT ["/app/orchestrator/run_pipeline.sh"]
 
-# Информация о том, как использовать
-CMD ["--help"]
 
 # # 1. Сборка образа
 # cd /home/user/wav-parser

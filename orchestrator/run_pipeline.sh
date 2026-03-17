@@ -1,145 +1,99 @@
 #!/bin/bash
 
-set -e  # Выход при первой ошибке
+set -e
 
-if [ $# -ne 3 ]; then
-    echo "ОШИБКА: Неверное количество аргументов!"
-    echo ""
-    show_help
-    exit 1
-fi
+INPUT_DIR=/input
+MUSIC_DIR=/app/audio/clips
+SERVICES_DIR="/app/services"
+OUTPUT_DIR=/output
 
-
-INPUT_DIR=/input                # Задайте жестко путь на вашем сервере чтобы все работало исправно
-MUSIC_DIR=/app/audio/clips      # Файл находится в образе позже будет сделан так чтобы можно было все задавать в образе
-OUTPUT_ROOT=/output             # Задайте жестко путь на вашем сервере чтобы все работало исправно
-
+INPUT_FILES=$(find "$INPUT_DIR" -type f -name "*.mp3" | wc -l)
+mkdir -p "$OUTPUT_DIR"
 start_total=$SECONDS
 
-# Проверка существования входных директорий
-for dir in "$INPUT_DIR" "$MUSIC_DIR"; do
-    if [ ! -d "$dir" ]; then
-        echo "ОШИБКА: Директория не существует: $dir"
-        exit 1
-    fi
-done
+echo "Старт"
 
-# Создание структуры выходных папок
-CLEAN_AUDIO_DIR="$OUTPUT_ROOT/clean_audio"
-FILT_AUDIO_DIR="$OUTPUT_ROOT/filt_audio"
-RESULT_DIR="$OUTPUT_ROOT/result"
-
-mkdir -p "$CLEAN_AUDIO_DIR"
-mkdir -p "$FILT_AUDIO_DIR"
-mkdir -p "$RESULT_DIR"
-
-# Путь к сервисам
-SERVICES_DIR="/app/services"
-
-# Проверка доступности сервисов
-SERVICES=("music_removal" "denoise" "diarization")
-for service in "${SERVICES[@]}"; do
-    if [ ! -f "$SERVICES_DIR/$service/main.py" ]; then
-        echo "ОШИБКА: Сервис $service не найден!"
-        echo "Проверьте путь: $SERVICES_DIR/$service/main.py"
-        exit 1
-    fi
-done
-
-# Подсчет файлов
-INPUT_FILES=$(find "$INPUT_DIR" -type f \( -name "*.mp3" \) | wc -l)
-if [ "$INPUT_FILES" -eq 0 ]; then
-    echo "ПРЕДУПРЕЖДЕНИЕ: Нет MP3 файлов в $INPUT_DIR"
+# CHECKING
+if [ ! -d "$INPUT_DIR" ]; then
+    echo "❌ Нет INPUT_DIR: $INPUT_DIR"
     exit 1
 fi
 
-echo "Найдено файлов для обработки: $INPUT_FILES"
-echo ""
+if [ ! -d "$MUSIC_DIR" ]; then
+    echo "❌ Нет MUSIC_DIR: $MUSIC_DIR"
+    exit 1
+fi
 
-# Шаг 1: Удаление музыки
-echo "ШАГ 1: УДАЛЕНИЕ МУЗЫКИ"
+if [ "$INPUT_FILES" -eq 0 ]; then
+    echo "❌ Нет MP3 файлов"
+    exit 1
+fi
 
+echo "Найдено файлов: $INPUT_FILES"
+
+# 1. MUSIC REMOVAL
+echo "Шаг 1: Удаление музыки"
 start_step=$SECONDS
-if ! python3 "$SERVICES_DIR/music_removal/main.py" \
+
+python3 "$SERVICES_DIR/music_removal/main.py" \
     --input "$INPUT_DIR" \
     --music_dir "$MUSIC_DIR" \
-    --output "$CLEAN_AUDIO_DIR"; then
-    echo "ОШИБКА: Сервис music_removal завершился с ошибкой"
-    exit 1
-fi
+    --output "$OUTPUT_DIR"
 
-CLEAN_FILES=$(find "$CLEAN_AUDIO_DIR" -type f -name "*.wav" | wc -l)
-echo "Шаг 1 завершен. Обработано файлов: $CLEAN_FILES"
-step_time=$((SECONDS - start_step))
-echo "Шаг 1 выполнен за ${step_time} сек"
+step_time_1=$((SECONDS - start_step))
 
-# Проверка наличия файлов после первого шага
-if [ "$CLEAN_FILES" -eq 0 ]; then
-    echo "ОШИБКА: Нет файлов для дальнейшей обработки"
-    echo "Проверьте сервис music_removal и входные данные"
-    exit 1
-fi
-
-# Шаг 2: Шумоподавление
-echo "ШАГ 2: ШУМОПОДАВЛЕНИЕ"
+# 2. DENOISE
+echo "Шаг 2: Шумоподавление"
 start_step=$SECONDS
-if ! python3 "$SERVICES_DIR/denoise/main.py" \
-    --input "$CLEAN_AUDIO_DIR" \
-    --output "$FILT_AUDIO_DIR"; then
-    echo "❌ ОШИБКА: Сервис denoise завершился с ошибкой"
-    exit 1
-fi
 
-FILT_FILES=$(find "$FILT_AUDIO_DIR" -type f -name "*.wav" | wc -l)
-echo ""
-echo "Шаг 2 завершен. Обработано файлов: $FILT_FILES"
-step_time=$((SECONDS - start_step))
-echo "Шаг 2 выполнен за ${step_time} сек"
+python3 "$SERVICES_DIR/denoise/main.py" \
+    --input "$OUTPUT_DIR" \
+    --output "$OUTPUT_DIR"
 
-# Шаг 3: Диаризация
-echo "ШАГ 3: ДИАРИЗАЦИЯ"
-echo ""
+step_time_2=$((SECONDS - start_step))
+
+# 3. DIARIZATION
+echo "Шаг 3: Диаризация"
 start_step=$SECONDS
-if ! python3 "$SERVICES_DIR/diarization/main.py" \
-    --input "$FILT_AUDIO_DIR" \
-    --output "$RESULT_DIR"; then
-    echo "ОШИБКА: Сервис diarization завершился с ошибкой"
-    exit 1
-fi
 
-RESULT_FILES=$(find "$RESULT_DIR" -type f -name "*.wav" | wc -l)
-echo "Шаг 3 завершен. Обработано файлов: $RESULT_FILES"
-step_time=$((SECONDS - start_step))
-echo "Шаг 3 выполнен за ${step_time} сек"
+python3 "$SERVICES_DIR/diarization/main.py" \
+    --input "$OUTPUT_DIR" \
+    --output "$OUTPUT_DIR"
 
-# Шаг 4: Выделение признаков
-echo "ШАГ 3: ДИАРИЗАЦИЯ"
-echo ""
+step_time_3=$((SECONDS - start_step))
+
+# 4. AUDIO SEPARATION
+echo "Шаг 4: Разделение аудио"
 start_step=$SECONDS
-if ! python3 "$SERVICES_DIR/voice_params/main.py" \
-    --input "$RESULT_DIR" \
-    --output "$RESULT_DIR"; then
-    echo "ОШИБКА: Сервис voice_params завершился с ошибкой"
-    exit 1
-fi
 
-RESULT_FILES=$(find "$RESULT_DIR" -type f -name "*.wav" | wc -l)
-echo "Шаг 4 завершен. Обработано файлов: $RESULT_FILES"
-step_time=$((SECONDS - start_step))
-echo "Шаг 4 выполнен за ${step_time} сек"
-echo ""
+python3 "$SERVICES_DIR/audio_separation/main.py" \
+    --input "$OUTPUT_DIR" \
+    --output "$OUTPUT_DIR"
 
+step_time_4=$((SECONDS - start_step))
+
+# 5. VOICE PARAMS
+echo "Шаг 5: Признаки голоса"
+start_step=$SECONDS
+
+python3 "$SERVICES_DIR/voice_params/main.py" \
+    --input "$OUTPUT_DIR" \
+    --output "$OUTPUT_DIR"
+
+step_time_5=$((SECONDS - start_step))
+
+# FINAL
 total_time=$((SECONDS - start_total))
-echo "Общее время выполнения: ${total_time} сек"
 
-# Итоговая статистика
-echo "======================================="
-echo " ПАЙПЛАЙН УСПЕШНО ЗАВЕРШЕН"
-echo "======================================="
-echo " СТАТИСТИКА:"
-echo " Входных файлов:    $INPUT_FILES"
-echo " После удаления музыки: $CLEAN_FILES"
-echo " После шумоподавления:  $FILT_FILES"
-echo " Финальных результатов: $RESULT_FILES"
+echo " Пайплайн завершен "
+echo " Входных файлов: $INPUT_FILES"
+echo " ------------------------------ "
+echo " Шаг 1 занял: ${step_time_1} сек"
+echo " Шаг 2 занял: ${step_time_2} сек"
+echo " Шаг 3 занял: ${step_time_3} сек"
+echo " Шаг 4 занял: ${step_time_4} сек"
+echo " Шаг 5 занял: ${step_time_5} сек"
+echo " ------------------------------ "
+echo " Общее время: ${total_time} сек"
 
 exit 0

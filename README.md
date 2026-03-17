@@ -125,6 +125,34 @@ python ./services/denoise/main.py --input audio/tracks/ --output audio/denoised
 * ✅ Добавить анализ средней частоты и формант всех аудиофайлов
 * [ ] Ускорить производительность диаризации и транскрибации с помощью GPU
 
+
+This project uses the diarization pipeline from:
+
+https://github.com/MahmoudAshraf97/whisper-diarization
+
+All credits belong to the original authors.
 ---
 
 ![alt text](working.gif)
+
+git clone --recurse-submodules https://github.com/yourname/project
+
+| модель   | VRAM    | качество |
+| -------- | ------- | -------- |
+| small    | ~2GB    | среднее  |
+| medium   | ~5GB    | хорошее  |
+| large-v3 | 10-12GB | отличное |
+
+
+
+conda create -n whisper_diarization python=3.10
+conda activate whisper_diarization
+pip install cython
+sudo apt update && sudo apt install ffmpeg
+
+потом
+pip install -c constraints.txt -r requirements.txt
+
+
+пайплайн для выделения аудио состоял из 
+выбрана qwen на ~15 ГБ 

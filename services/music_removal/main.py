@@ -161,9 +161,9 @@ if __name__ == "__main__":
 
 
 # Код для запуска обработки одного трека
-# python ./services/music_removal/main.py --input /home/user/WAV-Parser/audio/tracks/file.wav \
-# --music_dir /home/user/WAV-Parser/audio/clips/ \
-# --output /home/user/WAV-Parser/audio/clean_audio
+# python services/music_removal/main.py --input /home/user/wav-parser/audio/tracks/sozvon.mp3 \
+# --music_dir /home/user/wav-parser/audio/clips/ \
+# --output /home/user/wav-parser/audio/tracks
 
 # Код для запуска обработки папки
 # python ./services/music_removal/main.py --input /home/user/wav-parser/audio/tracks/ \

@@ -1,99 +1,38 @@
-import os
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
 import argparse
-import warnings
+from pathlib import Path
+from model import run_diarization
+from utils import find_audio_files
 
-from pipeline import DiarizationPipeline
-from audio_writer import write_speaker_audio
+def process_path(input_path: str, output_path: str):
+    input_path = Path(input_path)
+    output_path = Path(output_path)
+    output_path.mkdir(parents=True, exist_ok=True)
 
-warnings.filterwarnings("ignore")
-
-
-def parse_args():
-    p = argparse.ArgumentParser("Diarization service")
-    p.add_argument("--input", required=True, help="Путь к аудио файлу или папке")
-    p.add_argument("--output", required=True, help="Папка для сохранения результата")
-    return p.parse_args()
-
-
-def extract_numeric_id(file_path):
-    base = os.path.basename(file_path)
-    stem = os.path.splitext(base)[0]
-    return stem.split("_")[0]
-
-
-def process_file(file_path, output_dir):
-    file_id = extract_numeric_id(file_path)
-    print(f"\n🔊 Обрабатываем: {file_path}")
-
-    pipeline = DiarizationPipeline(file_path)
-    result = pipeline.run()
-
-    speakers = result.get("speakers", [])
-
-    if not speakers:
-        print(f"⚠️ Люди не найдены: {file_path}")
+    audio_files = find_audio_files(input_path)
+    if not audio_files:
+        print(f"Путь {input_path} не существует или нет аудио файлов")
         return
 
-    # 🎯 Определение ролей
-    roles = {}
+    print(f"Найдено {len(audio_files)} файлов для обработки")
 
-    if "clean_filt" in os.path.basename(file_path) and len(speakers) >= 2:
-        roles[speakers[0]] = "target"
-        roles[speakers[1]] = "operator"
-    else:
-        roles[speakers[0]] = "target"
-
-    # 💾 Сохраняем
-    for spk, role in roles.items():
-        final_path = os.path.join(output_dir, f"{file_id}_{role}.wav")
-
-        write_speaker_audio(
-            result["diarization"],
-            result["audio"],
-            result["sr"],
-            spk,
-            role,
-            final_path
-        )
-
-        print(f"✅ Сохранено: {final_path}")
-
-
-def main():
-    args = parse_args()
-    os.makedirs(args.output, exist_ok=True)
-
-    if os.path.isdir(args.input):
-        files = [
-            os.path.join(args.input, f)
-            for f in os.listdir(args.input)
-            if f.lower().endswith(".wav")
-        ]
-
-        if not files:
-            print("Файлы .wav не найдены")
-            return
-
-        for f in files:
-            process_file(f, args.output)
-
-    elif os.path.isfile(args.input):
-        process_file(args.input, args.output)
-
-    else:
-        print("Указанный путь не существует")
+    for audio_file in audio_files:
+        run_diarization(audio_file, output_path)
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser("Diarization Runner")
+    parser.add_argument("--input", required=True, help="Файл или папка для обработки")
+    parser.add_argument("--output", required=True, help="Папка для сохранения результата")
+    args = parser.parse_args()
+
+    process_path(args.input, args.output)
 
 
-# Код для запуска обработки одного трека
-# python ./services/diarization/main.py --input /home/user/wav-parser/audio/filt_audio/file.wav \
-# --output /home/user/wav-parser/audio/result
 
-# Код для запуска обработки папки
-# python ./services/diarization/main.py --input /home/user/wav-parser/audio/filt_audio/ \
-# --output /home/user/wav-parser/audio/result
+
+# Для одного файла
+# python services/diarization/main.py --input audio/sound/file.wav --output audio/temp_folder
+
+
+# Для всей папки
+# python services/diarization/main.py --input audio/sound --output audio/sound
