@@ -1,3 +1,6 @@
 [submodule "whisper-diarization"]
 	path = whisper-diarization
 	url = https://github.com/MahmoudAshraf97/whisper-diarization
+[submodule "external/whisper-diarization"]
+	path = external/whisper-diarization
+	url = https://github.com/MahmoudAshraf97/whisper-diarization
