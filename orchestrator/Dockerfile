@@ -1,65 +1,56 @@
-# Используем официальный Python 3.10 slim
-FROM python:3.10-slim
+# ------------------------
+# Базовый образ с PyTorch + CUDA
+# ------------------------
+FROM pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime
 
 # ------------------------
-# 1. Системные зависимости
+# Окружение
 # ------------------------
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    ffmpeg \
-    libsndfile1 \
-    git \
-    cython3 \
-    libssl-dev \
-    libffi-dev \
-    && rm -rf /var/lib/apt/lists/*
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Etc/UTC
 
-# ------------------------
-# 2. Рабочая директория
-# ------------------------
 WORKDIR /app
 
 # ------------------------
-# 3. Копируем файлы с зависимостями
+# 1. Системные зависимости + компилятор + Python пакеты
 # ------------------------
-COPY requirements.txt .
+COPY requirements.txt . 
 COPY external/whisper-diarization/requirements.txt external/whisper-diarization/requirements.txt
 
-# ------------------------
-# 4. Устанавливаем PyPI пакеты
-# ------------------------
-# Сначала обычные PyPI зависимости
-RUN pip install --upgrade pip && \
-    # Берем все пакеты кроме git+
-    grep -v '^git+' external/whisper-diarization/requirements.txt > /tmp/regular_req.txt && \
-    pip install --prefer-binary -r requirements.txt && \
-    pip install --prefer-binary -r /tmp/regular_req.txt
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ffmpeg \
+        libsndfile1 \
+        git \
+        cython3 \
+        build-essential \
+    && apt-get clean && rm -rf /var/lib/apt/lists/* \
+    && pip install --upgrade pip --no-cache-dir \
+    && grep -v -E '^git+|^torch|^torchaudio' external/whisper-diarization/requirements.txt > /tmp/regular_req.txt \
+    && grep -v -E '^torch|^torchaudio' requirements.txt > /tmp/clean_req.txt \
+    && pip install --prefer-binary --no-cache-dir -r /tmp/clean_req.txt \
+    && pip install --prefer-binary --no-cache-dir -r /tmp/regular_req.txt \
+    && grep '^git+' external/whisper-diarization/requirements.txt | xargs -n 1 pip install --no-cache-dir \
+    && rm -rf /tmp/*.txt
 
 # ------------------------
-# 5. Устанавливаем Git-пакеты отдельно
-# ------------------------
-RUN grep '^git+' external/whisper-diarization/requirements.txt | xargs -n 1 pip install --no-cache-dir
-
-# ------------------------
-# 6. Копируем весь код проекта
+# 2. Копируем весь проект
 # ------------------------
 COPY . /app
 
 # ------------------------
-# 7. Инициализация submodules (если нужны)
+# 3. Submodules
 # ------------------------
-RUN git submodule update --init --recursive
+RUN git submodule update --init --recursive || true
 
 # ------------------------
-# 8. Разрешения на запуск пайплайна
+# 4. Права
 # ------------------------
 RUN chmod +x /app/orchestrator/run_pipeline.sh
 
 # ------------------------
-# 9. Entry point
+# 5. Точка входа
 # ------------------------
 ENTRYPOINT ["/app/orchestrator/run_pipeline.sh"]
-
 
 # # 1. Сборка образа
 # cd /home/user/wav-parser

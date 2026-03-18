@@ -8,7 +8,7 @@ def find_audio_files(input_path: Path):
     audio_files = []
     if input_path.is_dir():
         for ext in AUDIO_EXTENSIONS:
-            audio_files.extend(input_path.glob(f"*{ext}"))
+            audio_files.extend(input_path.rglob(f"*{ext}"))
     elif input_path.is_file() and input_path.suffix.lower() in AUDIO_EXTENSIONS:
         audio_files.append(input_path)
     return audio_files
