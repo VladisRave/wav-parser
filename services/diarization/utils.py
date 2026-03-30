@@ -1,21 +1,27 @@
 from pathlib import Path
-import shutil
 
-AUDIO_EXTENSIONS = [".wav", ".mp3"]
-OUTPUT_EXTENSIONS = [".txt", ".srt", ".wav", ".json"]  # файлы, которые мы хотим собрать
+AUDIO_EXTENSIONS = [".wav"]
+
 
 def find_audio_files(input_path: Path):
+    """
+    Find wav files in hash subdirectories, skipping the input/ dir
+    and files that already have .srt output (already diarized).
+    """
     audio_files = []
-    if input_path.is_dir():
-        for ext in AUDIO_EXTENSIONS:
-            audio_files.extend(input_path.rglob(f"*{ext}"))
-    elif input_path.is_file() and input_path.suffix.lower() in AUDIO_EXTENSIONS:
-        audio_files.append(input_path)
-    return audio_files
+    if not input_path.is_dir():
+        return audio_files
 
-def copy_results(src_dir: Path, dest_dir: Path):
-    """Копируем все файлы результата из src_dir в dest_dir"""
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    for file in src_dir.glob("*"):
-        if file.suffix.lower() in OUTPUT_EXTENSIONS:
-            shutil.copy2(file, dest_dir)
+    for subdir in sorted(input_path.iterdir()):
+        if not subdir.is_dir():
+            continue
+        if subdir.name == "input":
+            continue
+
+        for wav in subdir.glob("*.wav"):
+            srt = wav.with_suffix(".srt")
+            if srt.exists():
+                continue
+            audio_files.append(wav)
+
+    return audio_files

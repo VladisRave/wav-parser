@@ -1,60 +1,140 @@
-import subprocess
+"""
+Diarization engine: loads all models once, processes files in a loop.
+Imports logic from whisper-diarization directly instead of subprocess.
+"""
+
+import os
+import sys
+import logging
+import re
 from pathlib import Path
-import shutil
 
-# BASE_DIR — корень проекта, относительно model.py
-BASE_DIR = Path(__file__).resolve().parent.parent.parent  
-# model.py находится в services/diarization_new/
-# поэтому parent.parent.parent → /home/user/wav-parser
+import torch
+import faster_whisper
+import numpy as np
 
-# Путь к скрипту whisper-diarization
-DIARIZE_SCRIPT = BASE_DIR / "external/whisper-diarization/diarize.py"
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+WHISPER_DIARIZATION_DIR = BASE_DIR / "external" / "whisper-diarization"
+sys.path.insert(0, str(WHISPER_DIARIZATION_DIR))
+
+from ctc_forced_aligner import (
+    generate_emissions,
+    get_alignments,
+    get_spans,
+    load_alignment_model,
+    postprocess_results,
+    preprocess_text,
+)
+from helpers import (
+    find_numeral_symbol_tokens,
+    get_realigned_ws_mapping_with_punctuation,
+    get_sentences_speaker_mapping,
+    get_speaker_aware_transcript,
+    get_words_speaker_mapping,
+    langs_to_iso,
+    write_srt,
+)
+from diarization import MSDDDiarizer
 
 WHISPER_MODEL = "large-v3"
-BATCH_SIZE = 4
-# WHISPER_MODEL = "base"
+BATCH_SIZE = 16
 LANGUAGE = "ru"
-AUDIO_EXTENSIONS = [".wav", ".mp3", ".m4a", ".flac"]
-OUTPUT_EXTENSIONS = [".txt", ".srt"]  # файлы для перемещения после обработки
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+MTYPES = {"cpu": "int8", "cuda": "float16"}
 
 
-def extract_numeric_id(file_path: Path) -> str:
-    """Берем имя файла и извлекаем числовой идентификатор"""
-    stem = file_path.stem
-    return stem.split("_")[0]
+class DiarizationEngine:
+    def __init__(self):
+        self.whisper_model = None
+        self.whisper_pipeline = None
+        self.alignment_model = None
+        self.alignment_tokenizer = None
+        self.diarizer = None
+        self.suppress_tokens = None
 
+    def load_models(self):
+        print("Loading Whisper model...")
+        self.whisper_model = faster_whisper.WhisperModel(
+            WHISPER_MODEL, device=DEVICE, compute_type=MTYPES[DEVICE]
+        )
+        self.whisper_pipeline = faster_whisper.BatchedInferencePipeline(self.whisper_model)
+        self.suppress_tokens = [-1]
 
-def run_diarization(audio_file: Path, output_dir: Path):
-    """
-    Запускаем whisper-diarization для одного файла
-    и перемещаем результаты (.txt, .srt) в output_dir
-    """
-    file_id = extract_numeric_id(audio_file)
-    audio_result_dir = output_dir / file_id
-    audio_result_dir.mkdir(parents=True, exist_ok=True)
+        print("Loading alignment model...")
+        self.alignment_model, self.alignment_tokenizer = load_alignment_model(
+            DEVICE,
+            dtype=torch.float16 if DEVICE == "cuda" else torch.float32,
+        )
 
-    command = [
-        "python",
-        str(DIARIZE_SCRIPT),
-        "-a",
-        str(audio_file),
-        "--whisper-model",
-        WHISPER_MODEL,
-        "--language",
-        LANGUAGE,
-        "--no-stem",
-        "--batch-size",
-        str(BATCH_SIZE)
-    ]
+        print("Loading NeMo MSDD diarizer...")
+        self.diarizer = MSDDDiarizer(device=DEVICE)
 
-    print(f"\n🔊 Обрабатываем: {audio_file}")
-    subprocess.run(command, check=True)
-    print(f"✅ whisper-diarization завершил обработку: {audio_file.name}")
+        allocated = torch.cuda.memory_allocated() / 1024**3 if DEVICE == "cuda" else 0
+        print(f"All models loaded. VRAM used: {allocated:.2f} GB")
 
-    # --- перенос .txt и .srt в audio_result_dir ---
-    for ext in OUTPUT_EXTENSIONS:
-        src_file = audio_file.parent / f"{audio_file.stem}{ext}"
-        if src_file.exists():
-            dst_file = audio_result_dir / src_file.name
-            shutil.move(str(src_file), str(dst_file))
-            print(f"📄 {src_file.name} перемещён в {audio_result_dir}")
+    def process_file(self, audio_path: Path, output_dir: Path):
+        file_id = audio_path.stem
+        result_dir = output_dir / file_id
+        result_dir.mkdir(parents=True, exist_ok=True)
+
+        audio_waveform = faster_whisper.decode_audio(str(audio_path))
+
+        # 1. Transcribe
+        transcript_segments, info = self.whisper_pipeline.transcribe(
+            audio_waveform,
+            LANGUAGE,
+            suppress_tokens=self.suppress_tokens,
+            batch_size=BATCH_SIZE,
+        )
+        full_transcript = "".join(segment.text for segment in transcript_segments)
+
+        if not full_transcript.strip():
+            logging.warning(f"Empty transcript for {audio_path.name}, skipping")
+            return
+
+        # 2. Forced alignment
+        emissions, stride = generate_emissions(
+            self.alignment_model,
+            torch.from_numpy(audio_waveform)
+            .to(self.alignment_model.dtype)
+            .to(self.alignment_model.device),
+            batch_size=BATCH_SIZE,
+        )
+
+        tokens_starred, text_starred = preprocess_text(
+            full_transcript,
+            romanize=True,
+            language=langs_to_iso[info.language],
+        )
+
+        segments, scores, blank_token = get_alignments(
+            emissions, tokens_starred, self.alignment_tokenizer
+        )
+        spans = get_spans(tokens_starred, segments, blank_token)
+        word_timestamps = postprocess_results(text_starred, spans, stride, scores)
+
+        # 3. Speaker diarization
+        speaker_ts = self.diarizer.diarize(
+            torch.from_numpy(audio_waveform).unsqueeze(0)
+        )
+
+        # 4. Combine words + speakers
+        wsm = get_words_speaker_mapping(word_timestamps, speaker_ts, "start")
+        wsm = get_realigned_ws_mapping_with_punctuation(wsm)
+        ssm = get_sentences_speaker_mapping(wsm, speaker_ts)
+
+        # 5. Write output
+        txt_path = result_dir / f"{file_id}.txt"
+        srt_path = result_dir / f"{file_id}.srt"
+
+        with open(txt_path, "w", encoding="utf-8-sig") as f:
+            get_speaker_aware_transcript(ssm, f)
+
+        with open(srt_path, "w", encoding="utf-8-sig") as f:
+            write_srt(ssm, f)
+
+    def unload(self):
+        del self.whisper_model, self.whisper_pipeline
+        del self.alignment_model, self.alignment_tokenizer
+        del self.diarizer
+        torch.cuda.empty_cache()

@@ -1,12 +1,13 @@
 import argparse
 import torch
 from pathlib import Path
-from model import run_diarization
+from tqdm import tqdm
+from model import DiarizationEngine
 from utils import find_audio_files
+
 
 def check_cuda():
     print("\n===== CUDA DEBUG =====")
-
     print("torch version:", torch.__version__)
     print("cuda available:", torch.cuda.is_available())
 
@@ -14,15 +15,13 @@ def check_cuda():
         print("gpu count:", torch.cuda.device_count())
         print("current device:", torch.cuda.current_device())
         print("device name:", torch.cuda.get_device_name(0))
-
-        # пробуем реально использовать GPU
         x = torch.rand(3, 3).cuda()
         print("tensor device:", x.device)
-
     else:
-        print("❌ CUDA НЕ ДОСТУПНА")
+        print("CUDA NOT AVAILABLE")
 
     print("======================\n")
+
 
 def process_path(input_path: str, output_path: str):
     input_path = Path(input_path)
@@ -31,31 +30,30 @@ def process_path(input_path: str, output_path: str):
 
     audio_files = find_audio_files(input_path)
     if not audio_files:
-        print(f"Путь {input_path} не существует или нет аудио файлов")
+        print(f"No audio files found in {input_path}")
         return
 
-    print(f"Найдено {len(audio_files)} файлов для обработки")
+    print(f"Found {len(audio_files)} files to diarize")
 
-    for audio_file in audio_files:
-        run_diarization(audio_file, output_path)
+    engine = DiarizationEngine()
+    engine.load_models()
+
+    for audio_file in tqdm(audio_files, desc="Diarization"):
+        try:
+            engine.process_file(audio_file, output_path)
+        except Exception as e:
+            print(f"\nError processing {audio_file.name}: {e}")
+            continue
+
+    engine.unload()
 
 
 if __name__ == "__main__":
     check_cuda()
 
     parser = argparse.ArgumentParser("Diarization Runner")
-    parser.add_argument("--input", required=True, help="Файл или папка для обработки")
-    parser.add_argument("--output", required=True, help="Папка для сохранения результата")
+    parser.add_argument("--input", required=True)
+    parser.add_argument("--output", required=True)
     args = parser.parse_args()
 
     process_path(args.input, args.output)
-
-
-
-
-# Для одного файла
-# python services/diarization/main.py --input audio/sound/file.wav --output audio/temp_folder
-
-
-# Для всей папки
-# python services/diarization/main.py --input /home/user/wav-parser/audio/results --output /home/user/wav-parser/audio/results

@@ -1,10 +1,9 @@
 import os
 import csv
 import argparse
-from pathlib import Path  # добавим для красоты
+from tqdm import tqdm
 from pipeline import VoiceParamsPipeline
-from hash_generator import FileHasher
-from file_utils import find_role_files_recursive  # импортируем новую функцию
+from file_utils import find_role_files_recursive
 import warnings
 
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -42,15 +41,11 @@ def extract_features_from_file(audio_path):
     return features
 
 
-def process_files(file_list, output_csv, hasher=None):
+def process_files(file_list, output_csv):
     rows = []
-    for fpath in file_list:
+    for fpath in tqdm(file_list, desc="Voice params"):
         print(f"Обработка: {fpath}")
         features = extract_features_from_file(fpath)
-        if hasher:
-            original_id = features["call_id"]
-            hashed_id = hasher.hash_name(original_id)
-            features["call_id"] = hashed_id
         rows.append(features)
 
     if not rows:
@@ -72,9 +67,7 @@ def main():
     args = parse_args()
     os.makedirs(args.output, exist_ok=True)
 
-    hasher = FileHasher(json_path=os.path.join(args.output, "hash_mapping.json"))
-
-    # --- НОВЫЙ КОД: рекурсивный поиск ---
+    # рекурсивный поиск 
     user_files, assistant_files = find_role_files_recursive(args.input)
     all_files = user_files + assistant_files
 
@@ -83,9 +76,8 @@ def main():
         return
 
     output_csv = os.path.join(args.output, "features.csv")
-    process_files(all_files, output_csv, hasher=hasher)
 
-    hasher.save_json()
+    process_files(all_files, output_csv)
 
 
 if __name__ == "__main__":
@@ -94,7 +86,6 @@ if __name__ == "__main__":
 
 # Для одного файла
 # python services/voice_params/main.py --input audio/sound/file.wav --output audio/temp_folder
-
 
 # Для всей папки
 # python services/voice_params/main.py --input audio/tracks --output audio/tracks

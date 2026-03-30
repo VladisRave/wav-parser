@@ -1,5 +1,6 @@
 import argparse
 from pathlib import Path
+from tqdm import tqdm
 
 from splitter import split_audio_by_role
 
@@ -21,7 +22,7 @@ def main():
         print(f"Нет .wav файлов в {input_root} (включая подпапки)")
         return
 
-    for wav_path in wav_files:
+    for wav_path in tqdm(wav_files, desc="Audio separation"):
         # Определяем папку, где лежит wav
         src_dir = wav_path.parent
         base_name = wav_path.stem

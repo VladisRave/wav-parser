@@ -3,6 +3,7 @@ import argparse
 import os
 import librosa
 import soundfile as sf
+from tqdm import tqdm
 
 from music_search import (
     extract_chroma_features,
@@ -78,7 +79,7 @@ def main():
         print("Не найдено WAV файлов с музыкой для удаления.")
         return
 
-    for file_path in files_to_process:
+    for file_path in tqdm(files_to_process, desc="Music removal"):
         print(f"\nОбработка: {file_path}")
         
         try:
@@ -92,8 +93,8 @@ def main():
         # ==============================
         audio_duration = len(y_full) / sr
 
-        if audio_duration < 10.0:
-            print(f"⏭ Пропуск файла (длина {audio_duration:.2f} сек < 10 сек): {file_path}")
+        if audio_duration <= 15.0:
+            print(f"Пропуск файла (длина {audio_duration:.2f} сек < 10 сек): {file_path}")
             continue
 
 

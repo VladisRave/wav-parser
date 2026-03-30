@@ -1,6 +1,7 @@
 from pathlib import Path
 import argparse
 import os
+from tqdm import tqdm
 from denoise import process_audio, save_audio
 
 import warnings
@@ -25,7 +26,12 @@ def get_audio_files(input_path):
 
     elif input_path.is_dir():
         exts = (".wav", ".mp3", ".flac", ".ogg", ".m4a")
-        return [p for p in input_path.rglob("*") if p.suffix.lower() in exts]
+        skip_dirs = {"input"}
+        return [
+            p for p in input_path.rglob("*")
+            if p.suffix.lower() in exts
+            and not any(part in skip_dirs for part in p.relative_to(input_path).parts)
+        ]
 
     else:
         raise FileNotFoundError(f"Путь не найден: {input_path}")
@@ -47,7 +53,7 @@ def main():
 
     print(f"Найдено файлов: {len(files)}")
 
-    for file_path in files:
+    for file_path in tqdm(files, desc="Denoise"):
         try:
             file_path = Path(file_path)
 

@@ -1,5 +1,6 @@
 from pathlib import Path
-from typing import List, Tuple, Dict, Optional
+from typing import List, Tuple, Dict
+
 
 def find_role_files_recursive(root_dir: str) -> Tuple[List[Path], List[Path]]:
     """

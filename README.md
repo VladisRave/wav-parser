@@ -1,13 +1,15 @@
 # WAV-Parser
 
-**WAV-Parser** — это парсер аудио, предназначенный для:
+**WAV-Parser** — парсер аудио для обработки телефонных записей:
 
-* Удаления музыкальных фоновых паттернов
-* Повышения качества аудиозаписей
-* Выделения голоса целевого пользователя из телефонной речи
-* Определения пользователя, оператора (опционально) и роботов-голосовых помощников
+* Удаление музыкальных фоновых паттернов
+* Шумоподавление (денойзинг)
+* Диаризация и транскрибация (Whisper + NeMo MSDD)
+* Определение ролей спикеров через LLM (USER / ASSISTANT / ROBOT)
+* Разделение аудио по ролям
+* Извлечение голосовых признаков (features)
 
-Проект организован как набор сервисов, которые можно запускать независимо или объединять в единый пайплайн, что и представлено в папке `orchestrator`.
+Сервисы можно запускать независимо или объединять в единый пайплайн через `orchestrator/run_pipeline.sh`.
 
 ---
 
@@ -17,8 +19,8 @@
 wav-parser/
 │
 ├── audio/
-│   ├── clips/
-│   │   └── cutoff_music.wav
+│   └── clips/
+│       └── cutoff_music.wav
 │
 ├── services/
 │   ├── music_removal/
@@ -31,19 +33,19 @@ wav-parser/
 │   │
 │   ├── diarization/
 │   │   ├── main.py            # Точка входа для диаризации
-│   │   ├── model.py           # Инициация модели из внешнего репозитория
-│   │   └── utils.py           # Поддержка для main файла, форматы аудио и расширения
+│   │   ├── model.py           # Whisper + NeMo MSDD модели
+│   │   └── utils.py           # Поиск аудиофайлов, форматы и расширения
 │   │
 │   ├── role_parser/
 │   │   ├── main.py            # Точка входа для определения роли спикера
-│   │   ├── llm.py             # Инициация LLM модели
+│   │   ├── llm.py             # Загрузка LLM (Qwen2.5-7B-Instruct, 4-bit)
 │   │   └── detect_roles.py    # Определение ролей спикеров через промты
 │   │
 │   ├── audio_separation/
 │   │   ├── main.py            # Запуск сервиса разделения аудио
 │   │   ├── audio_utils.py     # RMS нормализация, объединение сегментов
 │   │   ├── models.py          # Таймкоды и блоки спикеров
-│   │   ├── splitter.py        # Разделение строки на составляющие
+│   │   ├── splitter.py        # Разделение аудио по ролям
 │   │   └── srt_parser.py      # Парсинг SRT файлов и извлечение спикеров
 │   │
 │   ├── voice_params/
@@ -57,7 +59,7 @@ wav-parser/
 │       └── pca_builder.ipyb
 │
 ├── external/
-│   └── whisper-diarization/   # Вспомогательные функции
+│   └── whisper-diarization/   # Субмодуль диаризации
 │
 ├── orchestrator/
 │   ├── Dockerfile
@@ -69,81 +71,154 @@ wav-parser/
 
 ---
 
-## Алгоритм работы
-
-Последовательность обработки аудио:
+## Пайплайн: 6 шагов
 
 ```
-music_removal -> denoise -> diarization -> role_parser -> audio_separation -> voice_params
+Шаг 1: music_removal   →  Удаление музыки из аудио
+Шаг 2: denoise          →  Шумоподавление
+Шаг 3: diarization      →  Диаризация + транскрибация (SRT, TXT)
+Шаг 4: role_parser      →  Определение ролей спикеров (JSON)
+Шаг 5: audio_separation →  Разделение аудио по ролям (WAV на каждую роль)
+Шаг 6: voice_params     →  Извлечение голосовых признаков (features.csv)
 ```
 
-* Для диаризации используется модель Whisper, рассчитанная на разные размеры и VRAM.
-* LLM модель по умолчанию — `Qwen2.5-7B-Instruct`. Ее можно поменять в `llm.py`.
+### Выходные данные
 
-Возможные модели Whisper:
+| Шаг | Результат |
+| --- | --------- |
+| 1. music_removal | Очищенный аудиофайл (без фоновой музыки) |
+| 2. denoise | Аудио с подавленным шумом |
+| 3. diarization | `.srt` (таймкоды + спикеры) и `.txt` (транскрипция) |
+| 4. role_parser | `_roles.json` — маппинг спикеров на роли |
+| 5. audio_separation | `_user.wav`, `_assistant.wav`, `_robot.wav` |
+| 6. voice_params | `features.csv` — признаки голоса, `hash_mapping.json` |
 
-| Модель   | VRAM     | Комментарий                                         |
-| -------- | -------- | --------------------------------------------------- |
-| tiny     | ~0.5 GB  | Минимальное качество, очень быстро                  |
-| base     | ~1.5 GB  | Базовое качество                                    |
-| small    | ~2 GB    | Среднее качество                                    |
-| medium   | ~5 GB    | Хорошее качество, баланс VRAM/точность              |
-| large-v2 | ~10 GB   | Высокое качество                                    |
+### Модели
+
+* **Whisper** (`services/diarization/model.py`) — по умолчанию `large-v3`
+* **Qwen LLM** (`services/role_parser/llm.py`) — по умолчанию `Qwen2.5-7B-Instruct` с 4-bit квантизацией (BitsAndBytes)
+
+| Модель Whisper | VRAM | Комментарий |
+| -------------- | ---- | ----------- |
+| tiny | ~0.5 GB | Минимальное качество, очень быстро |
+| base | ~1.5 GB | Базовое качество |
+| small | ~2 GB | Среднее качество |
+| medium | ~5 GB | Хорошее качество, баланс VRAM/точность |
+| large-v2 | ~10 GB | Высокое качество |
 | large-v3 | 10–12 GB | Максимальная точность, рекомендуется для production |
 
 ---
 
-## Требования к системе на которой запускался пайпалайн
+## Запуск через Docker (рекомендуется)
 
-* GPU: GeForce 4060 GTX, VRAM 8GB
-* CPU: Intel Core i7, 2.4 GHz
-* RAM: 16 GB
-
-> Использование только CPU может привести к зависаниям на этапе диаризации.
-
----
-
-## Запуск проекта
-
-### Через Docker (рекомендуется для сервера)
-
-1. Клонируем репозиторий:
+### 1. Сборка образа
 
 ```bash
-git clone https://github.com/VladisRave/wav-parser.git
+git clone --recurse-submodules https://github.com/VladisRave/wav-parser.git
 cd wav-parser
-```
-
-2. Собираем образ:
-
-```bash
 docker build -t wav-parser -f orchestrator/Dockerfile . --no-cache
 ```
 
-3. Запускаем пайплайн:
+### 2. Запуск всего пайплайна
 
 ```bash
-docker run --rm \
-  -v /home/user/input:/input \
-  -v /home/user/output:/output \
+sudo docker run -d --rm --gpus all \
+  -e PYTHONUNBUFFERED=1 \
+  -v /path/to/input:/input \
+  -v /path/to/output:/output \
+  --name wav-parser-run \
+  wav-parser
+```
+
+Без аргументов `--from` / `--to` выполняются все 6 шагов.
+
+### 3. Запуск отдельных шагов
+
+Флаги `--from N` и `--to M` позволяют выполнить только нужный диапазон шагов (1–6):
+
+```bash
+# Только диаризация (шаг 3)
+sudo docker run -d --rm --gpus all \
+  -v /path/to/input:/input \
+  -v /path/to/output:/output \
+  wav-parser --from 3 --to 3
+
+# Шаги 4–6 (role_parser → audio_separation → voice_params)
+sudo docker run -d --rm --gpus all \
+  -v /path/to/input:/input \
+  -v /path/to/output:/output \
+  wav-parser --from 4 --to 6
+```
+
+### 4. Разработка: монтирование кода с хоста
+
+Чтобы не пересобирать образ при изменении кода, можно подключить сервисы и оркестратор с хоста:
+
+```bash
+sudo docker run -d --rm --gpus all \
+  -e PYTHONUNBUFFERED=1 \
+  -v /path/to/input:/input \
+  -v /path/to/output:/output \
+  -v /path/to/wav-parser/orchestrator/run_pipeline.sh:/app/orchestrator/run_pipeline.sh \
+  -v /path/to/wav-parser/services:/app/services \
+  --name wav-parser-run \
+  wav-parser
+```
+
+### 5. Мониторинг
+
+```bash
+# Статус контейнера
+sudo docker ps | grep wav-parser-run
+
+# Логи в реальном времени
+sudo docker logs -f wav-parser-run
+
+# Последние N строк
+sudo docker logs --tail 50 wav-parser-run
+```
+
+> **Важно:** при использовании `-d --rm` контейнер удаляется после завершения (в том числе при ошибке), и логи теряются. Для отладки убирайте `--rm`, чтобы посмотреть логи после падения, а затем удаляйте контейнер вручную через `docker rm`.
+
+### 6. Запуск отдельного сервиса напрямую
+
+Можно обойти `run_pipeline.sh` и вызвать конкретный сервис:
+
+```bash
+sudo docker run --rm --gpus all \
+  --entrypoint python3 \
+  -v /path/to/output:/output \
+  -v /path/to/wav-parser/services:/app/services \
   wav-parser \
-  /input /app/audio/clips /output
+  /app/services/voice_params/main.py --input /output --output /output
 ```
-
-4. Или через скрипт orchestrator:
-
-```bash
-chmod +x orchestrator/run_pipeline.sh
-./orchestrator/run_pipeline.sh
-```
-
-Все сервисы будут запускаться автоматически в пайплайне.
 
 ---
 
-### Локальный запуск через терминал
+## Механизм работы пайплайна
 
-1. Создаем и активируем окружение:
+### Рабочая директория
+
+Пайплайн создаёт временную директорию `output/.work/`, в которой хранятся промежуточные результаты всех шагов. После успешного завершения всех 6 шагов результаты копируются в `output/`, а `.work/` удаляется.
+
+### Отслеживание прогресса
+
+* **`.work/.completed_steps`** — отслеживает завершённые шаги текущего батча. Если контейнер упал, при перезапуске уже завершённые шаги пропускаются.
+* **`output/processed.log`** — список уже обработанных файлов (по имени MP3). При следующем запуске эти файлы автоматически пропускаются.
+
+### Кэширование моделей HuggingFace
+
+Модели (Whisper, Qwen) скачиваются внутрь контейнера при первом запуске. Чтобы не скачивать их каждый раз и не занимать место в overlay-FS контейнера, подключите кэш с хоста:
+
+```bash
+-v ~/.cache/huggingface:/root/.cache/huggingface
+```
+
+---
+
+## Локальный запуск
+
+### 1. Установка окружения
 
 ```bash
 git clone --recurse-submodules https://github.com/VladisRave/wav-parser.git
@@ -157,23 +232,14 @@ sudo apt update && sudo apt install ffmpeg
 pip install -c constraints.txt -r requirements.txt
 ```
 
-2. Подготовка данных:
-
-```text
-audio/
-└── tracks/
-    ├── file1.mp3
-    ├── file2.mp3
-```
-
-3. Запуск сервисов по отдельности:
+### 2. Запуск сервисов по отдельности
 
 ```bash
 python services/music_removal/main.py --input audio/tracks --music_dir audio/clips --output audio/clean_audio
 python services/denoise/main.py --input audio/clean_audio --output audio/denoised
 python services/diarization/main.py --input audio/denoised --output audio/diarized
 python services/role_parser/main.py --input audio/diarized --output audio/roles
-python services/audio_separation/main.py --input audio/roles --output audio/splitted
+python services/audio_separation/main.py --input_dir audio/roles --output_dir audio/splitted
 python services/voice_params/main.py --input audio/splitted --output audio/features
 ```
 
@@ -181,25 +247,12 @@ python services/voice_params/main.py --input audio/splitted --output audio/featu
 
 ---
 
-## Конфигурация моделей
+## Известные ограничения
 
-* Whisper (`services/diarization/model.py`)
-* Qwen LLM (`services/role_parser/llm.py`)
-
-Можно заменить на любую HuggingFace модель с учетом доступной VRAM.
-
----
-
-## Выходные данные пайплайна
-
-| Этап             | Результат                          |
-| ---------------- | ---------------------------------- |
-| music_removal    | Очищенный аудиофайл                |
-| denoise          | Улучшенное аудио                   |
-| diarization      | SRT файл с таймкодами и сегментами и TXT файл |
-| role_parser      | JSON с ролями спикеров             |
-| audio_separation | Аудио по спикерам                  |
-| voice_params     | Признаки (features)                |
+* **GPU обязателен** для шагов 3 (diarization) и 4 (role_parser). Работа на CPU может привести к зависаниям или крайне медленной обработке.
+* **Длинные транскрипции** (>6000 символов) автоматически обрезаются перед отправкой в LLM на шаге 4. Для определения ролей достаточно начала разговора.
+* **Шаг 4 (role_parser)** ловит OOM-ошибки и пропускает файлы, на которых не хватает VRAM, вместо остановки всего батча.
+* **Дисковое пространство:** шаги 1–3 генерируют промежуточные WAV-файлы. Убедитесь, что на диске достаточно места (в том числе для скачивания моделей HuggingFace).
 
 ---
 
@@ -210,6 +263,3 @@ python services/voice_params/main.py --input audio/splitted --output audio/featu
 [https://github.com/MahmoudAshraf97/whisper-diarization](https://github.com/MahmoudAshraf97/whisper-diarization)
 
 Все права на оригинальную реализацию принадлежат авторам. В проекте используется интеграция и модификации для пайплайна.
-
-
-![alt text](working.gif)

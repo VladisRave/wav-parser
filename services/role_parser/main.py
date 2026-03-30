@@ -1,5 +1,8 @@
 import argparse
 from pathlib import Path
+
+import torch
+from tqdm import tqdm
 from detect_roles import detect_roles
 
 TEXT_EXTENSIONS = [".txt"]  # форматы расшифровок
@@ -57,7 +60,7 @@ def main():
 
         print(f"Найдено {len(files)} файлов для обработки")
 
-        for file_path in files:
+        for file_path in tqdm(files, desc="Role parsing"):
             if output_path:
                 # Сохраняем с сохранением структуры папок относительно input_path
                 relative_dir = file_path.parent.relative_to(input_path)
@@ -67,7 +70,11 @@ def main():
                 # Сохраняем рядом с файлом
                 out_file = file_path.with_name(f"{file_path.stem}_roles.json")
 
-            process_single_file(file_path, out_file)
+            try:
+                process_single_file(file_path, out_file)
+            except torch.cuda.OutOfMemoryError:
+                print(f"\nOOM on {file_path.name}, skipping")
+                torch.cuda.empty_cache()
 
     else:
         print(f"Указанный путь не существует: {input_path}")

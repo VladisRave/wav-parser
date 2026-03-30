@@ -24,12 +24,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         cython3 \
         build-essential \
     && apt-get clean && rm -rf /var/lib/apt/lists/* \
-    && pip install --upgrade pip --no-cache-dir \
+    && pip install --upgrade pip uv --no-cache-dir \
     && grep -v -E '^git+|^torch|^torchaudio' external/whisper-diarization/requirements.txt > /tmp/regular_req.txt \
     && grep -v -E '^torch|^torchaudio' requirements.txt > /tmp/clean_req.txt \
-    && pip install --prefer-binary --no-cache-dir -r /tmp/clean_req.txt \
-    && pip install --prefer-binary --no-cache-dir -r /tmp/regular_req.txt \
-    && grep '^git+' external/whisper-diarization/requirements.txt | xargs -n 1 pip install --no-cache-dir \
+    && uv pip install --system --no-cache -r /tmp/clean_req.txt \
+    && uv pip install --system --no-cache -r /tmp/regular_req.txt \
+    && grep '^git+' external/whisper-diarization/requirements.txt | xargs -n 1 uv pip install --system --no-cache \
+    && uv pip install --system --force-reinstall --no-cache torchaudio \
     && rm -rf /tmp/*.txt
 
 # ------------------------
