@@ -4,6 +4,29 @@ from scipy.stats import skew, kurtosis
 import librosa
 
 
+
+def ensure_min_duration(sound, min_duration=1.0):
+    duration = sound.get_total_duration()
+
+    if duration >= min_duration:
+        return sound
+
+    sr = sound.sampling_frequency
+    signal = sound.values
+
+    target_samples = int(min_duration * sr)
+    current_samples = signal.shape[1]
+
+    pad_length = target_samples - current_samples
+
+    padded_signal = np.pad(
+        signal,
+        ((0, 0), (0, pad_length)),
+        mode="constant"
+    )
+
+    return parselmouth.Sound(padded_signal, sampling_frequency=sr)
+
 def compute_pitch(sound, pitch_floor=75, pitch_ceiling=300, time_step=0.01):
     pitch = sound.to_pitch(time_step=time_step, pitch_floor=pitch_floor, pitch_ceiling=pitch_ceiling)
     f0 = pitch.selected_array["frequency"]
@@ -158,6 +181,8 @@ def compute_spectral(sound, sr=16000):
     return features
 
 def extract_features(sound):
+
+    sound = ensure_min_duration(sound)
 
     features = {}
 
