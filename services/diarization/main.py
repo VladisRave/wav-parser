@@ -57,3 +57,11 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     process_path(args.input, args.output)
+
+# Код для запуска обработки одного трека
+# python ./services/diarization/main.py --input /home/user/wav-parser/audio/filt_audio/file.wav \
+# --output /home/user/wav-parser/audio/result
+
+# Код для запуска обработки папки
+# python ./services/diarization/main.py --input /home/user/wav-parser/audio/tracks/ \
+# --output /home/user/wav-parser/audio/tracks

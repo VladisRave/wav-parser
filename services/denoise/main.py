@@ -92,4 +92,4 @@ if __name__ == "__main__":
 
 
 # Для всей папки
-# python services/denoise/main.py --input /home/user/wav-parser/audio/tracks --output /home/user/wav-parser/audio/trracks
+# python services/denoise/main.py --input /home/user/wav-parser/audio/tracks --output /home/user/wav-parser/audio/tracks

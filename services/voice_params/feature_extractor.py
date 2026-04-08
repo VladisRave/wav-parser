@@ -5,7 +5,7 @@ import librosa
 
 
 
-def ensure_min_duration(sound, min_duration=1.0):
+def ensure_min_duration(sound, min_duration=2.0):
     duration = sound.get_total_duration()
 
     if duration >= min_duration:
@@ -182,9 +182,13 @@ def compute_spectral(sound, sr=16000):
 
 def extract_features(sound):
 
+    original_duration = sound.get_total_duration()
+
     sound = ensure_min_duration(sound)
 
     features = {}
+
+    features["total_duration"] = original_duration
 
     # F0
     f0, pitch_obj = compute_pitch(sound)

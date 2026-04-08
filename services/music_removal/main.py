@@ -184,7 +184,7 @@ if __name__ == "__main__":
 # --music_dir /home/user/wav-parser/audio/clips/ \
 # --output /home/user/wav-parser/audio/tracks
 
-# Код для запуска обработки папки
-# python services/music_removal/main.py --input /home/user/papkamusik/gg \
+# # Код для запуска обработки папки
+# python services/music_removal/main.py --input /home/user/audio/res \
 # --music_dir /home/user/wav-parser/audio/clips/ \
 # --output /home/user/wav-parser/audio/tracks
