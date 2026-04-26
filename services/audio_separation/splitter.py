@@ -1,10 +1,10 @@
 from pathlib import Path
-from pydub import AudioSegment
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
-from models import Subtitle
-from srt_parser import parse_srt, load_role_mapping
-from audio_utils import concatenate_segments, match_target_amplitude
+from pydub import AudioSegment
+
+from audio_utils import concatenate_segments
+from srt_parser import load_role_mapping, parse_srt
 
 
 def split_audio_by_role(
@@ -12,47 +12,90 @@ def split_audio_by_role(
     srt_path: Path,
     json_path: Path,
     output_dir: Path,
-    normalize: bool = False,
-    target_db: float = -28
+    selected_roles: set[str] | None = None,
 ) -> Dict[str, Path]:
     """
-    Разрезает аудио по ролям и сохраняет отдельные файлы для каждой роли.
-    Возвращает словарь {роль: путь_к_файлу}.
+    Разделяет аудиофайл на дорожки по ролям спикеров.
+
+    Args:
+        audio_path: путь к аудиофайлу
+        srt_path: путь к SRT файлу
+        json_path: путь к JSON с маппингом Speaker → Role
+        output_dir: директория для сохранения результата
+        selected_roles: набор ролей для обработки (если None — все роли)
+
+    Input:
+        - аудио файл
+        - SRT с таймингами и спикерами
+        - JSON с ролями
+        - фильтр ролей (опционально)
+
+    Output:
+        dict:
+        {
+            "USER": Path,
+            "ASSISTANT": Path,
+            "ROBOT": Path
+        }
+
+    Result:
+        - читает аудио
+        - парсит SRT
+        - применяет role mapping
+        - фильтрует роли по selected_roles
+        - склеивает сегменты
+        - сохраняет отдельные аудиофайлы
     """
     audio = AudioSegment.from_file(audio_path)
+
     subs = parse_srt(srt_path)
     role_map = load_role_mapping(json_path)
 
-    # Группируем интервалы по ролям (только те роли, что есть в маппинге)
+
+    if not role_map:
+        print(f"Предупреждение: role_map пустой для {audio_path}, пропускаем")
+        return {}
+
     roles = set(role_map.values())
-    segments_by_role: Dict[str, List[Tuple[int, int]]] = {role: [] for role in roles}
+
+    if selected_roles:
+        roles = roles.intersection(selected_roles)
+
+    segments_by_role: Dict[str, List[Tuple[int, int]]] = {
+        role: [] for role in roles
+    }
 
     for sub in subs:
         role = role_map.get(sub.speaker)
-        if role in segments_by_role:
-            start_ms = int(sub.start_sec * 1000)
-            end_ms = int(sub.end_sec * 1000)
-            segments_by_role[role].append((start_ms, end_ms))
+
+        if role not in segments_by_role:
+            continue
+
+        start_ms = int(sub.start_sec * 1000)
+        end_ms = int(sub.end_sec * 1000)
+
+        segments_by_role[role].append((start_ms, end_ms))
 
     base_name = audio_path.stem
-    result_files = {}
+    result_files: Dict[str, Path] = {}
+
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     for role, intervals in segments_by_role.items():
         if not intervals:
-            print(f"Для роли {role} нет сегментов в {audio_path.name}")
+            print(f"Нет сегментов для роли {role} в {audio_path.name}")
             continue
 
-        combined = concatenate_segments(audio, intervals)
-        out_file = output_dir / f"{base_name}_{role.lower()}.wav"
-        combined.export(out_file, format="wav")
-        print(f"Сохранён файл: {out_file}")
-        result_files[role] = out_file
+        intervals.sort(key=lambda x: x[0])
 
-        if normalize:
-            normalized = match_target_amplitude(combined, target_db)
-            norm_file = output_dir / f"{base_name}_{role.lower()}_norm.wav"
-            normalized.export(norm_file, format="wav")
-            print(f"Нормализованный файл: {norm_file}")
-            result_files[f"{role}_norm"] = norm_file
+        combined_audio = concatenate_segments(audio, intervals)
+
+        out_file = output_dir / f"{base_name}_{role.lower()}.wav"
+
+        combined_audio.export(out_file, format="wav")
+
+        print(f"Сохранён файл: {out_file}")
+
+        result_files[role] = out_file
 
     return result_files

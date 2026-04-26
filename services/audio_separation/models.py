@@ -11,6 +11,4 @@ class Subtitle:
     speaker: str
     text: str
 
-
-# Тип для маппинга ролей: имя спикера -> роль
 RoleMapping = Dict[str, str]

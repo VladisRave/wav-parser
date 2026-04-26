@@ -1,78 +1,171 @@
 import os
 import csv
 import argparse
+import parselmouth
+import numpy as np
 from tqdm import tqdm
-from pipeline import VoiceParamsPipeline
-from file_utils import find_role_files_recursive
-import warnings
+from pathlib import Path
+from typing import List, Dict
 
+
+from feature_extractor import extract_features 
+from file_utils import find_role_files_recursive
+
+import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
+    """
+    Парсинг аргументов командной строки.
+
+    Returns:
+        argparse.Namespace: аргументы запуска
+    """
     parser = argparse.ArgumentParser("Voice params service")
-    parser.add_argument("--input", required=True,
-                        help="Путь к папке, содержащей *_user.wav и *_assistant.wav (рекурсивно)")
-    parser.add_argument("--output", required=True,
-                        help="Папка для сохранения CSV документа")
+
+    parser.add_argument(
+        "--input",
+        required=True,
+        help="Папка с *_user.wav и *_assistant.wav",
+    )
+
+    parser.add_argument(
+        "--output",
+        required=True,
+        help="Папка для сохранения CSV",
+    )
+
+    parser.add_argument(
+        "--mode",
+        choices=["user", "assistant", "both"],
+        default="both",
+        help="Какие файлы обрабатывать",
+    )
+
     return parser.parse_args()
 
 
-def parse_filename(audio_path):
+def load_sound(audio_path: Path) -> parselmouth.Sound:
     """
-    Извлекает call_id и role из имени файла.
-    Ожидается формат: <call_id>_<role>.wav, role = 'assistant' или 'user'.
+    Загружает аудиофайл и приводит его к безопасному формату.
+
+    Args:
+        audio_path: путь к wav файлу
+
+    Returns:
+        parselmouth.Sound: загруженный звук
     """
-    filename = os.path.basename(audio_path)
-    name, _ = os.path.splitext(filename)
-    *parts, role = name.split('_')
-    if not parts or role not in ('assistant', 'user'):
-        raise ValueError(f"Неверный формат имени файла: {filename}")
-    call_id = '_'.join(parts)
-    return call_id, role
+    sound = parselmouth.Sound(str(audio_path))
+
+    y = sound.values.T.flatten()
+    sr = sound.sampling_frequency
+
+    y = np.nan_to_num(y)
+
+    return parselmouth.Sound(y, sampling_frequency=sr)
 
 
-def extract_features_from_file(audio_path):
+def extract_features_from_file(audio_path: Path) -> Dict:
+    """
+    Извлекает акустические признаки из одного файла.
+
+    Args:
+        audio_path: путь к аудиофайлу
+
+    Returns:
+        dict: извлечённые признаки + метаданные
+    """
+    sound = load_sound(audio_path)
+    features = extract_features(sound)
+
     call_id, role = parse_filename(audio_path)
-    pipeline = VoiceParamsPipeline(audio_path)
-    features = pipeline.run()
+
     features["call_id"] = call_id
     features["role"] = role
+
     return features
 
 
-def process_files(file_list, output_csv):
+def parse_filename(audio_path: Path) -> tuple[str, str]:
+    """
+    Извлекает call_id и роль из имени файла.
+
+    Args:
+        audio_path: путь к файлу
+
+    Returns:
+        tuple[str, str]: (call_id, role)
+    """
+    name = audio_path.stem
+    parts = name.split("_")
+
+    if len(parts) < 2:
+        raise ValueError(f"Неверное имя файла: {audio_path.name}")
+
+    role = parts[-1]
+    call_id = "_".join(parts[:-1])
+
+    return call_id, role
+
+
+def process_files(file_list: List[Path], output_csv: str) -> None:
+    """
+    Обрабатывает список файлов и сохраняет результат в CSV.
+
+    Args:
+        file_list: список аудиофайлов
+        output_csv: путь к CSV
+    """
     rows = []
+
     for fpath in tqdm(file_list, desc="Voice params"):
         print(f"Обработка: {fpath}")
-        features = extract_features_from_file(fpath)
-        rows.append(features)
+
+        try:
+            features = extract_features_from_file(fpath)
+            rows.append(features)
+        except Exception as e:
+            print(f"Ошибка в {fpath}: {e}")
+            continue
 
     if not rows:
         print("Нет данных для записи.")
         return
 
     fieldnames = ["call_id", "role"] + [
-        key for key in rows[0].keys()
-        if key not in ("call_id", "role")
+        k for k in rows[0].keys()
+        if k not in ("call_id", "role")
     ]
+
     with open(output_csv, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
+
     print(f"Results saved to {output_csv}")
 
 
-def main():
+def main() -> None:
     args = parse_args()
+
     os.makedirs(args.output, exist_ok=True)
 
-    # рекурсивный поиск 
+    include_user = args.mode in ("user", "both")
+    include_assistant = args.mode in ("assistant", "both")
+
     user_files, assistant_files = find_role_files_recursive(args.input)
-    all_files = user_files + assistant_files
+
+    all_files: List[Path] = []
+
+    if include_user:
+        all_files.extend(user_files)
+
+    if include_assistant:
+        all_files.extend(assistant_files)
 
     if not all_files:
-        print(f"Файлы *_user.wav или *_assistant.wav не найдены в {args.input} (включая подпапки)")
+        print(f"Файлы не найдены в {args.input}")
         return
 
     output_csv = os.path.join(args.output, "features.csv")
@@ -84,8 +177,17 @@ if __name__ == "__main__":
     main()
 
 
+# ==============================
+# Примеры запуска
+# ==============================
+
 # Для одного файла
-# python services/voice_params/main.py --input audio/sound/file.wav --output audio/temp_folder
+# python services/voice_params/main.py \
+# --input /path/to/file.mp3 \
+# --output /path/to/output_folder
+
 
 # Для всей папки
-# python services/voice_params/main.py --input audio/tracks --output audio/tracks
+# python services/voice_params/main.py \
+# --input /path/to/input_folder \
+# --output /path/to/output_folder

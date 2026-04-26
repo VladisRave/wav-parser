@@ -1,154 +1,200 @@
-# main.py
-import argparse
 import os
 import librosa
+import argparse
+import numpy as np
 import soundfile as sf
 from tqdm import tqdm
+from typing import List, Tuple
 
-from music_search import (
-    extract_chroma_features,
-    coarse_music_search,
-    refine_music_search,
-    merge_time_intervals,
-    replace_music_with_silence
-)
+from music_detector import get_music_intervals
 
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
 
 def parse_args():
-    p = argparse.ArgumentParser("Music removal service")
-    p.add_argument(
-        "--input", required=True,
-        help="Путь к исходному аудиофайлу (mp3/wav) или папке с файлами для обработки"
+    parser = argparse.ArgumentParser(
+        "Music removal using YAMNet (нейронная сеть)"
     )
-    p.add_argument(
-        "--music_dir", required=True,
-        help="Папка с WAV файлами музыкальных фрагментов, которые нужно удалить"
+
+    parser.add_argument(
+        "--input",
+        required=True,
+        help="Файл или папка с аудио"
     )
-    p.add_argument(
-        "--output", required=True,
-        help="Папка для сохранения обработанных файлов"
+
+    parser.add_argument(
+        "--output",
+        required=True,
+        help="Папка для сохранения результата"
     )
-    p.add_argument(
-        "--pre_music_sec", type=float, default=2.0,
-        help="Секунды до музыкального фрагмента, которые тоже заменяются тишиной"
+
+    parser.add_argument(
+        "--pre_music_sec",
+        type=float,
+        default=4.0,
+        help="Добавляемая тишина перед музыкой (сек)"
     )
-    p.add_argument(
-        "--silence_duration", type=float, default=3.0,
-        help="Длительность тишины, вставляемой вместо музыки (в секундах)"
+
+    parser.add_argument(
+        "--first_pre_sec",
+        type=float,
+        default=19.0,
+        help="Тишина перед первым музыкальным фрагментом"
     )
-    return p.parse_args()
+
+    parser.add_argument(
+        "--silence_duration",
+        type=float,
+        default=0.5,
+        help="Длительность вставляемой тишины"
+    )
+
+    parser.add_argument(
+        "--music_threshold",
+        type=float,
+        default=0.6,
+        help="Порог вероятности музыки (0.0–1.0)"
+    )
+
+    parser.add_argument(
+        "--merge_gap",
+        type=float,
+        default=1.0,
+        help="Объединение близких музыкальных сегментов (сек)"
+    )
+
+    parser.add_argument(
+        "--min_audio_len",
+        type=float,
+        default=20.0,
+        help="Минимальная длина аудио для обработки"
+    )
+
+    return parser.parse_args()
 
 
-def get_audio_files(input_path):
-    """Возвращает список файлов для обработки"""
+def get_audio_files(input_path: str) -> List[str]:
+    """
+    Получает список аудиофайлов для обработки.
+
+    Args:
+        input_path: путь к файлу или папке
+
+    Returns:
+        список файлов
+    """
     if os.path.isfile(input_path):
         return [input_path]
-    elif os.path.isdir(input_path):
+
+    if os.path.isdir(input_path):
         exts = (".mp3", ".wav", ".flac", ".ogg", ".m4a")
+
         return [
             os.path.join(input_path, f)
             for f in os.listdir(input_path)
             if f.lower().endswith(exts)
         ]
-    else:
-        raise FileNotFoundError(f"Не найден файл или папка: {input_path}")
+
+    raise FileNotFoundError(f"Не найден путь: {input_path}")
 
 
-def main():
+def replace_music_with_silence(
+    y_full: np.ndarray,
+    sr: int,
+    intervals_sec: List[Tuple[float, float]],
+    output_path: str,
+    pre_music_sec: float,
+    first_pre_sec: float,
+    silence_duration: float
+) -> np.ndarray:
+    """
+    Заменяет музыкальные участки тишиной.
+
+    Args:
+        y_full: аудиосигнал
+        sr: sample rate
+        intervals_sec: интервалы музыки
+        output_path: путь сохранения
+        pre_music_sec: запас перед сегментом
+        first_pre_sec: запас перед первым сегментом
+        silence_duration: длительность тишины
+
+    Returns:
+        обработанный сигнал
+    """
+
+    result = []
+    cursor = 0
+
+    silence = np.zeros(int(sr * silence_duration), dtype=y_full.dtype)
+
+    for i, (start_sec, end_sec) in enumerate(intervals_sec):
+
+        pad = first_pre_sec if i == 0 else pre_music_sec
+
+        start = max(0, int(start_sec * sr) - int(pad * sr))
+        end = min(len(y_full), int(end_sec * sr))
+
+        if cursor < start:
+            result.append(y_full[cursor:start])
+
+        result.append(silence)
+        cursor = end
+
+    if cursor < len(y_full):
+        result.append(y_full[cursor:])
+
+    y_out = np.concatenate(result)
+
+    sf.write(output_path, y_out, sr)
+
+    return y_out
+
+
+def main() -> None:
+    """
+    Главный pipeline удаления музыки.
+    """
+
     args = parse_args()
 
-    # Создаём выходную папку
     os.makedirs(args.output, exist_ok=True)
 
-    # Получаем список файлов для обработки
-    files_to_process = get_audio_files(args.input)
-    if not files_to_process:
-        print("Не найдено аудиофайлов для обработки.")
+    files = get_audio_files(args.input)
+
+    if not files:
+        print("Файлы не найдены")
         return
 
-    # Получаем список музыкальных WAV для удаления
-    music_files = [
-        os.path.join(args.music_dir, f)
-        for f in os.listdir(args.music_dir)
-        if f.lower().endswith(".wav")
-    ]
-    if not music_files:
-        print("Не найдено WAV файлов с музыкой для удаления.")
-        return
+    for file_path in tqdm(files, desc="Music removal"):
 
-    for file_path in tqdm(files_to_process, desc="Music removal"):
         print(f"\nОбработка: {file_path}")
-        
+
         try:
             y_full, sr = librosa.load(file_path, sr=None, mono=True)
-        except Exception as e:
-            print(f"Ошибка загрузки {file_path}: {e}")
+
+        except Exception as error:
+            print(f"Ошибка загрузки {file_path}: {error}")
             continue
 
-        # ==============================
-        # ПРОВЕРКА ДЛИНЫ АУДИО
-        # ==============================
-        audio_duration = len(y_full) / sr
+        duration = len(y_full) / sr
 
-        if audio_duration <= 15.0:
-            print(f"Пропуск файла (длина {audio_duration:.2f} сек < 10 сек): {file_path}")
+        if duration <= args.min_audio_len:
+            print(
+                f"Пропуск (длина {duration:.2f} сек < "
+                f"{args.min_audio_len} сек)"
+            )
             continue
 
+        intervals = get_music_intervals(
+            file_path,
+            music_threshold=args.music_threshold,
+            merge_gap_sec=args.merge_gap
+        )
 
-        # ==============================
-        # ДАЛЬШЕ ОБРАБАТЫВАЕМ ТОЛЬКО НОРМАЛЬНЫЕ ФАЙЛЫ
-        # ==============================
+        print(f"Найдено музыкальных блоков: {len(intervals)}")
 
-        win_sec = 3.0
-        overlap = 0.33
-        win_len = int(sr * win_sec)
-        step_len = int(sr * win_sec * (1 - overlap))
-
-        all_intervals = []
-
-        for fname in music_files:
-            try:
-                y_music, _ = librosa.load(fname, sr=sr, mono=True)
-            except Exception as e:
-                print(f"Ошибка загрузки {fname}: {e}")
-                continue
-
-            if len(y_music) < win_len:
-                print(f"Пропускаем {fname}, слишком короткий (<{win_sec} сек)")
-                continue
-
-            y_ref = y_music[:win_len]
-            chroma_ref = extract_chroma_features(y_ref, sr)
-
-            candidates = coarse_music_search(
-                y_full=y_full,
-                win_len=win_len,
-                chroma_reference=chroma_ref,
-                step_len=step_len,
-                sr=sr
-            )
-
-            refined = refine_music_search(
-                y_full=y_full,
-                y_reference=y_music,
-                candidates=candidates,
-                win_len=win_len,
-                sr=sr
-            )
-
-            for start, end in refined:
-                start_sec = max(0.0, start / sr - args.pre_music_sec)
-                all_intervals.append((start_sec, end / sr))
-
-        merged = merge_time_intervals(all_intervals)
-        print(f"Всего найдено музыкальных блоков: {len(merged)}")
-
-        # ==============================
-        # СОЗДАЁМ ПАПКУ ТОЛЬКО ТУТ
-        # ==============================
         base_name = os.path.splitext(os.path.basename(file_path))[0]
 
         file_output_dir = os.path.join(args.output, base_name)
@@ -156,35 +202,39 @@ def main():
 
         output_file = os.path.join(file_output_dir, f"{base_name}.wav")
 
-        # ==============================
-        # СОХРАНЕНИЕ
-        # ==============================
-
-        if merged:
+        if intervals:
             replace_music_with_silence(
-                y_full=y_full,
-                sr=sr,
-                intervals_sec=merged,
-                output_path=output_file,
-                pre_music_sec=args.pre_music_sec,
-                silence_duration=args.silence_duration
+                y_full,
+                sr,
+                intervals,
+                output_file,
+                args.pre_music_sec,
+                args.first_pre_sec,
+                args.silence_duration
             )
-            print(f"Музыка найдена. Файл сохранён как: {output_file}")
+
+            print(f"Музыка удалена: {output_file}")
+
         else:
             sf.write(output_file, y_full, sr)
-            print(f"Музыка не найдена. Файл сохранён как: {output_file}")
+            print(f"Музыка не найдена: {output_file}")
 
 
 if __name__ == "__main__":
     main()
 
 
-# Код для запуска обработки одного трека
-# python services/music_removal/main.py --input /home/user/wav-parser/audio/tracks/sozvon.mp3 \
-# --music_dir /home/user/wav-parser/audio/clips/ \
-# --output /home/user/wav-parser/audio/tracks
+# ==============================
+# Примеры запуска
+# ==============================
 
-# # Код для запуска обработки папки
-# python services/music_removal/main.py --input /home/user/audio/res \
-# --music_dir /home/user/wav-parser/audio/clips/ \
-# --output /home/user/wav-parser/audio/tracks
+# Для одного файла
+# python services/music_removal/main.py \
+# --input /path/to/file.mp3 \
+# --output /path/to/output_folder
+
+
+# Для всей папки
+# python services/music_removal/main.py \
+# --input /path/to/input_folder \
+# --output /path/to/output_folder

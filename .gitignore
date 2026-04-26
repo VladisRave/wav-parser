@@ -4,4 +4,5 @@
 /services/music_removal/__pycache__
 /services/role_parser/__pycache__
 /services/voice_params/__pycache__
-/audio/results
+/services/vizualization/__pycache__
+/services/vizualization/phenotypes_images.ipynb
