@@ -1,0 +1,24 @@
+version: "3.9"
+
+services:
+
+  stage1:
+    build: ./Stage_1_2
+    gpus: all
+    env_file:
+      - .env
+    volumes:
+      - ${DATA_DIR}:/shared
+
+  stage2:
+    build: ./Stage_3_6
+    gpus: all
+    env_file:
+      - .env
+    volumes:
+      - ${DATA_DIR}:/shared
+    
+
+# Чтобы запустить один из двух контейнеров:
+# docker-compose run stage1(stage2)
+# docker-compose run --rm stage1(stage2)

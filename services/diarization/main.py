@@ -1,99 +1,149 @@
-import os
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
 import argparse
+import logging
+import os
+import sys
 import warnings
+from pathlib import Path
 
-from pipeline import DiarizationPipeline
-from audio_writer import write_speaker_audio
+os.environ["NEMO_LOG_LEVEL"] = "ERROR"
+os.environ["NEMO_LOGGER_LEVEL"] = "ERROR"
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+os.environ["ONELOGGER_ENABLED"] = "0"
+os.environ["HYDRA_FULL_ERROR"] = "0"
 
 warnings.filterwarnings("ignore")
+logging.disable(logging.CRITICAL)
 
 
-def parse_args():
-    p = argparse.ArgumentParser("Diarization service")
-    p.add_argument("--input", required=True, help="Путь к аудио файлу или папке")
-    p.add_argument("--output", required=True, help="Папка для сохранения результата")
-    return p.parse_args()
+class SuppressAll:
+    """
+    Контекстный менеджер для полного подавления вывода stdout и stderr.
+
+    Result:
+        Перенаправляет stdout и stderr в os.devnull на время выполнения блока
+        кода внутри контекста.
+    """
+
+    def __enter__(self):
+        self._stdout = sys.stdout
+        self._stderr = sys.stderr
+        sys.stdout = open(os.devnull, "w")
+        sys.stderr = open(os.devnull, "w")
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        sys.stdout.close()
+        sys.stderr.close()
+        sys.stdout = self._stdout
+        sys.stderr = self._stderr
 
 
-def extract_numeric_id(file_path):
-    base = os.path.basename(file_path)
-    stem = os.path.splitext(base)[0]
-    return stem.split("_")[0]
+with SuppressAll():
+    import torch
+    from tqdm import tqdm
+    from model import DiarizationEngine
+    from utils import find_audio_files
 
 
-def process_file(file_path, output_dir):
-    file_id = extract_numeric_id(file_path)
-    print(f"\n🔊 Обрабатываем: {file_path}")
+def check_cuda() -> None:
+    """
+    Проверяет доступность CUDA и выводит информацию о системе и GPU.
 
-    pipeline = DiarizationPipeline(file_path)
-    result = pipeline.run()
+    Result:
+        Печатает:
+        - версию torch
+        - доступность CUDA
+        - количество GPU
+        - текущий GPU
+        - имя GPU
+        - тестовое устройство tensor
+    """
+    print("\n===== CUDA DEBUG =====")
+    print(f"torch version: {torch.__version__}")
+    print(f"cuda available: {torch.cuda.is_available()}")
 
-    speakers = result.get("speakers", [])
+    if torch.cuda.is_available():
+        print(f"gpu count: {torch.cuda.device_count()}")
+        print(f"current device: {torch.cuda.current_device()}")
+        print(f"device name: {torch.cuda.get_device_name(0)}")
 
-    if not speakers:
-        print(f"⚠️ Люди не найдены: {file_path}")
+        x = torch.rand(3, 3).cuda()
+        print(f"tensor device: {x.device}")
+    else:
+        print("CUDA NOT AVAILABLE")
+
+    print("======================\n")
+
+
+def process_path(input_path: str, output_path: str) -> None:
+    """
+    Обрабатывает все аудиофайлы в директории или файле с помощью диаризации.
+
+    Args:
+        input_path: путь к входному файлу или папке с аудио
+        output_path: путь для сохранения результатов
+
+    Result:
+        - Находит все аудиофайлы в input_path
+        - Загружает модели диаризации
+        - Обрабатывает каждый файл с прогресс-баром tqdm
+        - Сохраняет результаты в output_path
+        - Выводит ошибки обработки отдельных файлов
+    """
+    input_path = Path(input_path)
+    output_path = Path(output_path)
+
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    audio_files = find_audio_files(input_path)
+
+    if not audio_files:
+        print(f"No audio files found in {input_path}")
         return
 
-    # 🎯 Определение ролей
-    roles = {}
+    print(f"Found {len(audio_files)} files to diarize")
 
-    if "clean_filt" in os.path.basename(file_path) and len(speakers) >= 2:
-        roles[speakers[0]] = "target"
-        roles[speakers[1]] = "operator"
-    else:
-        roles[speakers[0]] = "target"
+    engine = DiarizationEngine()
+    engine.load_models()
 
-    # 💾 Сохраняем
-    for spk, role in roles.items():
-        final_path = os.path.join(output_dir, f"{file_id}_{role}.wav")
+    for audio_file in tqdm(audio_files, desc="Diarization"):
+        try:
+            engine.process_file(audio_file, output_path)
+        except Exception as e:
+            print(f"\nError processing {audio_file.name}: {e}")
+            continue
 
-        write_speaker_audio(
-            result["diarization"],
-            result["audio"],
-            result["sr"],
-            spk,
-            role,
-            final_path
-        )
-
-        print(f"✅ Сохранено: {final_path}")
+    engine.unload()
 
 
-def main():
-    args = parse_args()
-    os.makedirs(args.output, exist_ok=True)
+def main() -> None:
+    """
+    Точка входа в программу диаризации.
+    """
+    check_cuda()
 
-    if os.path.isdir(args.input):
-        files = [
-            os.path.join(args.input, f)
-            for f in os.listdir(args.input)
-            if f.lower().endswith(".wav")
-        ]
+    parser = argparse.ArgumentParser("Diarization Runner")
+    parser.add_argument("--input", required=True, help="Input file or folder")
+    parser.add_argument("--output", required=True, help="Output folder")
 
-        if not files:
-            print("Файлы .wav не найдены")
-            return
-
-        for f in files:
-            process_file(f, args.output)
-
-    elif os.path.isfile(args.input):
-        process_file(args.input, args.output)
-
-    else:
-        print("Указанный путь не существует")
+    args = parser.parse_args()
+    process_path(args.input, args.output)
 
 
 if __name__ == "__main__":
     main()
 
 
-# Код для запуска обработки одного трека
-# python ./services/diarization/main.py --input /home/user/wav-parser/audio/filt_audio/file.wav \
-# --output /home/user/wav-parser/audio/result
+# ==============================
+# Примеры запуска
+# ==============================
 
-# Код для запуска обработки папки
-# python ./services/diarization/main.py --input /home/user/wav-parser/audio/filt_audio/ \
-# --output /home/user/wav-parser/audio/result
+# Для одного файла
+# python services/diarization/main.py \
+# --input /path/to/file.mp3 \
+# --output /path/to/output_folder
+
+
+# Для всей папки
+# python services/diarization/main.py \
+# --input /path/to/input_folder \
+# --output /path/to/output_folder

@@ -1,80 +1,212 @@
-import numpy as np
 import librosa
+import numpy as np
 import soundfile as sf
 import scipy.signal as sps
+from typing import Tuple
 
 
-# 1. High-pass фильтр удаление гула ниже 70 Гц
-def highpass_filter(y, sr, cutoff=70):
-    sos = sps.butter(2, cutoff, btype="highpass", fs=sr, output="sos")
+EPS = 1e-12
+
+
+def highpass_filter(
+    y: np.ndarray,
+    sr: int,
+    cutoff: float = 70,
+    order: int = 4,
+) -> np.ndarray:
+    """
+    High-pass фильтр для удаления низкочастотного гула.
+
+    Args:
+        y: аудиосигнал
+        sr: частота дискретизации
+        cutoff: частота среза
+        order: порядок фильтра
+
+    Returns:
+        Отфильтрованный сигнал
+    """
+    sos = sps.butter(
+        order,
+        cutoff,
+        btype="highpass",
+        fs=sr,
+        output="sos",
+    )
+
     return sps.sosfiltfilt(sos, y)
 
-# 2. Лёгкое RMS усиление
-def mild_rms_boost(y, target_db=-25, max_boost_db=8):
-    rms = np.sqrt(np.mean(y**2) + 1e-9)
-    rms_db = 20 * np.log10(rms + 1e-9)
 
-    gain_db = target_db - rms_db
-    gain_db = np.clip(gain_db, 0, max_boost_db)
+def adaptive_frame_gain(
+    y: np.ndarray,
+    sr: int,
+    frame_length: float = 0.025,
+    hop_length: float = 0.01,
+    target_db: float = -28,
+    max_gain_db: float = 6,
+) -> np.ndarray:
+    """
+    Усиление тихих участков аудио без клиппинга.
 
-    gain = 10 ** (gain_db / 20)
-    return y * gain
+    Args:
+        y: аудиосигнал
+        sr: частота дискретизации
+        frame_length: длина фрейма (сек)
+        hop_length: шаг фрейма (сек)
+        target_db: целевая громкость
+        max_gain_db: максимальное усиление
 
-# 3. Frame-wise gentle boost (усиление тихих участков для распознавания второго участника)
-def frame_gain(y, sr, frame_length=0.025, hop_length=0.01, target_db=-28, max_gain_db=6):
-    frame_len_samples = int(frame_length * sr)
-    hop_len_samples = int(hop_length * sr)
+    Returns:
+        Обработанный сигнал
+    """
+
+    frame_len = int(frame_length * sr)
+    hop_len = int(hop_length * sr)
+
     y_out = np.zeros_like(y)
-    window = np.hanning(frame_len_samples)
-
-    for start in range(0, len(y) - frame_len_samples, hop_len_samples):
-        frame = y[start:start + frame_len_samples]
-        rms = np.sqrt(np.mean(frame**2) + 1e-9)
-        rms_db = 20 * np.log10(rms + 1e-9)
-        gain_db = target_db - rms_db
-        gain_db = np.clip(gain_db, 0, max_gain_db)
-        gain = 10 ** (gain_db / 20)
-        y_out[start:start + frame_len_samples] += frame * gain * window
-
     norm = np.zeros_like(y)
-    for start in range(0, len(y) - frame_len_samples, hop_len_samples):
-        norm[start:start + frame_len_samples] += window
+
+    window = np.hanning(frame_len)
+
+    for start in range(0, len(y) - frame_len + 1, hop_len):
+        frame = y[start:start + frame_len]
+
+        rms = np.sqrt(np.mean(frame ** 2) + EPS)
+        rms_db = 20 * np.log10(rms + EPS)
+
+        gain_db = np.clip(target_db - rms_db, 0, max_gain_db)
+        gain = 10 ** (gain_db / 20)
+
+        y_out[start:start + frame_len] += frame * gain * window
+        norm[start:start + frame_len] += window
+
     norm[norm == 0] = 1.0
-    return y_out / norm
+
+    y_out /= norm
+
+    return np.nan_to_num(y_out)
 
 
-# ==========================================================
-# 3. Soft limiter
-# ==========================================================
-def soft_limiter(y, threshold=0.98):
+def soft_limiter(
+    y: np.ndarray,
+    threshold: float = 0.98,
+) -> np.ndarray:
+    """
+    Мягкий лимитер для предотвращения клиппинга.
+
+    Args:
+        y: аудиосигнал
+        threshold: порог лимитера
+
+    Returns:
+        Ограниченный сигнал
+    """
     return np.tanh(y / threshold) * threshold
 
 
-# ==========================================================
-# 4. Финальная нормализация
-# ==========================================================
-def peak_normalize(y):
-    peak = np.max(np.abs(y))
-    if peak > 0:
-        return y * 0.95 / peak
-    return y
+def peak_normalize(
+    y: np.ndarray,
+    peak_level: float = 0.95,
+) -> np.ndarray:
+    """
+    Пиковая нормализация сигнала.
 
-def process_audio(input_path, target_sr=16000):
-    y, sr = librosa.load(input_path, sr=None, mono=True)
+    Args:
+        y: аудиосигнал
+        peak_level: максимальный уровень
+
+    Returns:
+        Нормализованный сигнал
+    """
+    peak = np.max(np.abs(y))
+
+    if peak > 0:
+        y = y * (peak_level / peak)
+
+    return np.nan_to_num(y)
+
+
+def process_audio(
+    input_path: str,
+    target_sr: int = 16000,
+    target_db: float = -28,
+    max_gain_db: float = 6,
+    hpf_cutoff: float = 70,
+) -> Tuple[np.ndarray, int]:
+    """
+    Основная функция обработки аудио.
+
+    Этапы обработки:
+    1. Загрузка аудио
+    2. Ресемплинг
+    3. High-pass фильтр
+    4. Выравнивание громкости
+    5. Лимитер
+    6. Пиковая нормализация
+
+    Args:
+        input_path: путь к аудиофайлу
+        target_sr: целевая частота дискретизации
+        target_db: целевая громкость
+        max_gain_db: максимальное усиление
+        hpf_cutoff: частота high-pass фильтра
+
+    Returns:
+        Обработанный сигнал и частота дискретизации
+    """
+
+    y, sr = librosa.load(
+        input_path,
+        sr=None,
+        mono=True,
+    )
 
     if sr != target_sr:
-        y = librosa.resample(y, orig_sr=sr, target_sr=target_sr)
+        y = librosa.resample(
+            y,
+            orig_sr=sr,
+            target_sr=target_sr,
+        )
         sr = target_sr
 
-    y = highpass_filter(y, sr)
-    y = mild_rms_boost(y)
-    y = frame_gain(y, sr)
+    # High-pass фильтр
+    y = highpass_filter(
+        y,
+        sr,
+        cutoff=hpf_cutoff,
+    )
+
+    # Выравнивание громкости
+    y = adaptive_frame_gain(
+        y,
+        sr,
+        target_db=target_db,
+        max_gain_db=max_gain_db,
+    )
+
+    # Лимитер
     y = soft_limiter(y)
+
+    # Пиковая нормализация
     y = peak_normalize(y)
-    y = np.nan_to_num(y)
 
     return y, sr
 
-def save_audio(y, sr, output_path):
+
+def save_audio(
+    y: np.ndarray,
+    sr: int,
+    output_path: str,
+) -> None:
+    """
+    Сохранение аудиофайла.
+
+    Args:
+        y: аудиосигнал
+        sr: частота дискретизации
+        output_path: путь сохранения
+    """
+
     sf.write(output_path, y, sr)
+
     print(f"Файл сохранён: {output_path}")

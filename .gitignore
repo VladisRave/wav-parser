@@ -1,4 +1,8 @@
-/services/voice_params/__pycache__
-/services/music_removal/__pycache__
-/services/diarization/__pycache__
+/services/audio_separation/__pycache__
 /services/denoise/__pycache__
+/services/diarization/__pycache__
+/services/music_removal/__pycache__
+/services/role_parser/__pycache__
+/services/voice_params/__pycache__
+/services/vizualization/__pycache__
+/services/vizualization/phenotypes_images.ipynb
