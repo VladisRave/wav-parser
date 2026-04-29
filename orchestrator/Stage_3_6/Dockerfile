@@ -1,38 +1,39 @@
-FROM pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime
+FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Etc/UTC
 
 WORKDIR /app
-ENV DEBIAN_FRONTEND=noninteractive
 
-
-# Копируем только requirements (с сохранением структуры)
-COPY orchestrator/Stage_3_6/requirements.txt ./orchestrator/Stage_3_6/
-COPY external/whisper-diarization/requirements.txt ./external/whisper-diarization/
-
-
+# 1. System dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 \
+        python3-pip \
+        python3-dev \
         ffmpeg \
         libsndfile1 \
         git \
-        cython3 \
         build-essential \
-    && apt-get clean && rm -rf /var/lib/apt/lists/* \
-    && pip install --upgrade pip uv --no-cache-dir \
-    && grep -v -E '^git+|^torch|^torchaudio' /app/external/whisper-diarization/requirements.txt > /tmp/regular_req.txt \
-    && grep -v -E '^torch|^torchaudio' /app/orchestrator/Stage_3_6/requirements.txt > /tmp/clean_req.txt \
-    && uv pip install --system --no-cache -r /tmp/clean_req.txt \
-    && uv pip install --system --no-cache -r /tmp/regular_req.txt
+    && rm -rf /var/lib/apt/lists/*
 
-# Копируем только необходимые исходники (не весь проект!)
-COPY services /app/services
-COPY external /app/external
-COPY orchestrator/Stage_3_6 /app/orchestrator/Stage_3_6
+RUN pip3 install --upgrade pip uv
 
-# Submodules
-RUN git submodule update --init --recursive || true
+# 2. Copy requirements
+COPY external/whisper-diarization/requirements.txt /tmp/whisper.txt
+COPY orchestrator/Stage_3_6/requirements.txt /tmp/main.txt
 
-# Права на исполнение скрипта
+# 3. Whisper installation
+RUN uv pip install --system --no-cache -r /tmp/whisper.txt
+
+# 4. Install other requirements (without Torch)
+RUN grep -v -E '^torch|^torchaudio|^transformers' /tmp/main.txt > /tmp/main_clean.txt \
+    && uv pip install --system --no-cache -r /tmp/main_clean.txt \
+    && rm /tmp/main_clean.txt
+
+# 5. Copy project
+COPY . /app
+
 RUN chmod +x /app/orchestrator/Stage_3_6/run_stage.sh
-
 ENTRYPOINT ["/app/orchestrator/Stage_3_6/run_stage.sh"]
 
 # # Как запускать первый Docktrfile

@@ -1,0 +1,2 @@
+# Consider all .ipynb files as documentation
+*.ipynb linguist-documentation=true

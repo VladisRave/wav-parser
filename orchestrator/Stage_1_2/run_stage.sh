@@ -3,23 +3,21 @@ set -e
 
 TZ=UTC date -d "+3 hours" '+%H:%M:%S'
 
-STATE_DIR="/shared/state"
-WORK_DIR="/shared/work"
-INPUT_DIR="/shared/input"
-LOG_DIR="/app/orchestrator/logs"
 SERVICES_DIR="/app/services"
 
-mkdir -p "$STATE_DIR" "$WORK_DIR" "$LOG_DIR"
+# Значения по умолчанию
+INPUT_DIR="${INPUT_DIR:-/shared/input}"
+WORK_DIR="${WORK_DIR:-/shared/work}"
+STATE_DIR="${STATE_DIR:-/shared/state}"
+LOG_DIR="${LOG_DIR:-/shared/logs}"
 
-PROCESSED_LOG="$STATE_DIR/processed.log"
+mkdir -p "$INPUT_DIR" "$WORK_DIR" "$STATE_DIR" "$LOG_DIR"
+
 STEP_LOG="$STATE_DIR/completed_steps"
 PIPELINE_LOG="$LOG_DIR/stage.log"
 
-touch "$PROCESSED_LOG"
-touch "$STEP_LOG"
-touch "$PIPELINE_LOG"
+touch "$STEP_LOG" "$PIPELINE_LOG"
 
-# диапазон шагов (ВАЖНО)
 FROM_STEP=${FROM_STEP:-${1:-1}}
 TO_STEP=${TO_STEP:-${2:-2}}
 
@@ -43,11 +41,8 @@ log "========================"
 if [ "$FROM_STEP" -le 1 ] && [ "$TO_STEP" -ge 1 ]; then
     if ! step_done 1; then
         log "STEP 1: music removal"
-
         python3 "$SERVICES_DIR/music_removal/main.py" \
-            --input "$INPUT_DIR" \
-            --output "$WORK_DIR"
-
+            --input "$INPUT_DIR" --output "$WORK_DIR"
         mark_step 1
         log "STEP 1 DONE"
     else
@@ -59,11 +54,8 @@ fi
 if [ "$FROM_STEP" -le 2 ] && [ "$TO_STEP" -ge 2 ]; then
     if ! step_done 2; then
         log "STEP 2: denoise"
-
         python3 "$SERVICES_DIR/denoise/main.py" \
-            --input "$WORK_DIR" \
-            --output "$WORK_DIR"
-
+            --input "$WORK_DIR" --output "$WORK_DIR"
         mark_step 2
         log "STEP 2 DONE"
     else

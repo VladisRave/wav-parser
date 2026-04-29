@@ -1,166 +1,124 @@
 import os
 import time
 import torch
-from typing import List, Dict
-
-from openai import AzureOpenAI
+import asyncio
+from typing import List, Dict, Tuple, Optional
+from openai import AsyncAzureOpenAI
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
+LLM_MODE = os.getenv("LLM_MODE", "server")
 
-# CONFIG
-LLM_MODE = os.getenv("LLM_MODE", "local")  # local-Qwen-2.5 | server-GPT-5
-
-AZURE_DEPLOYMENT = "gpt-5"
-AZURE_ENDPOINT = "https://YOUR-ENDPOINT.openai.azure.com/"
+# Azure config
+AZURE_DEPLOYMENT = os.getenv("AZURE_DEPLOYMENT", "gpt-4.1")
+AZURE_ENDPOINT = os.getenv("AZURE_ENDPOINT")         
 AZURE_API_KEY = os.getenv("OPENAI_API_KEY")
-AZURE_API_VERSION = "2024-02-15-preview"
+AZURE_API_VERSION = os.getenv("AZURE_API_VERSION", "2024-12-01-preview")
 
-_LLM_MODEL = None
-_LLM_TOKENIZER = None
+# Цены за 1 миллион токенов
+PRICE_INPUT = float(os.getenv("PRICE_INPUT", "102.10"))
+PRICE_CACHED_INPUT = float(os.getenv("PRICE_CACHED_INPUT", "10.21"))
+PRICE_OUTPUT = float(os.getenv("PRICE_OUTPUT", "816.76"))
 
-# LOCAL MODEL CONFIG
-quantization_config = BitsAndBytesConfig(
-    load_in_4bit=True,
-    bnb_4bit_compute_dtype=torch.float16,
-    bnb_4bit_use_double_quant=True,
-)
+class TokenStats:
+    def __init__(self):
+        self.non_cached_input = 0
+        self.cached_input = 0
+        self.output_tokens = 0
+        self.calls = 0
+    def add(self, non_cached: int, cached: int, output: int):
+        self.non_cached_input += non_cached
+        self.cached_input += cached
+        self.output_tokens += output
+        self.calls += 1
+    def report(self):
+        total_input = self.non_cached_input + self.cached_input
+        cost = (self.non_cached_input * PRICE_INPUT +
+                self.cached_input * PRICE_CACHED_INPUT +
+                self.output_tokens * PRICE_OUTPUT) / 1_000_000
+        return {
+            "calls": self.calls,
+            "non_cached_input_tokens": self.non_cached_input,
+            "cached_input_tokens": self.cached_input,
+            "total_input_tokens": total_input,
+            "avg_input_tokens_per_call": round(total_input / self.calls, 1) if self.calls else 0,
+            "avg_output_tokens_per_call": round(self.output_tokens / self.calls, 1) if self.calls else 0,
+            "output_tokens": self.output_tokens,
+            "total_tokens": total_input + self.output_tokens,
+            "cost": round(cost, 2)
+        }
 
-# AZURE CLIENT
-azure_client = AzureOpenAI(
+token_stats = TokenStats()
+
+azure_client = AsyncAzureOpenAI(
     api_version=AZURE_API_VERSION,
     azure_endpoint=AZURE_ENDPOINT,
     api_key=AZURE_API_KEY,
 )
 
+# Локальная модель
+_LLM_MODEL = None
+_LLM_TOKENIZER = None
+quantization_config = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=torch.float16)
 
 def load_llm():
-    """
-    Загружает локальную LLM (Qwen) один раз (singleton).
-
-    Returns:
-        tuple: (model, tokenizer)
-    """
     global _LLM_MODEL, _LLM_TOKENIZER
-
     if _LLM_MODEL is None:
-        device_info = "cuda" if torch.cuda.is_available() else "cpu"
-        print(f"[LLM] Using device: {device_info}")
-
-        _LLM_TOKENIZER = AutoTokenizer.from_pretrained(
-            "Qwen/Qwen2.5-7B-Instruct"
-        )
-
+        print("[LLM] Loading local Qwen2.5-7B...")
+        _LLM_TOKENIZER = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-7B-Instruct")
         _LLM_MODEL = AutoModelForCausalLM.from_pretrained(
             "Qwen/Qwen2.5-7B-Instruct",
             quantization_config=quantization_config,
             device_map="auto",
         )
-
         _LLM_MODEL.eval()
-
-        print(f"[LLM] Model loaded: Qwen2.5-7B-Instruct")
-        if torch.cuda.is_available():
-            print(f"[LLM] GPU: {torch.cuda.get_device_name(0)}")
-            mem = torch.cuda.memory_allocated() / 1024**3
-            print(f"[LLM] VRAM used: {mem:.2f} GB")
-
+        print("[LLM] Local model ready")
     return _LLM_MODEL, _LLM_TOKENIZER
 
-
-def generate_local(messages: List[Dict], max_new_tokens: int = 128) -> str:
-    """
-    Генерация ответа через локальную модель (Qwen).
-
-    Args:
-        messages: список сообщений в формате OpenAI chat
-        max_new_tokens: максимальная длина ответа
-
-    Returns:
-        str: ответ модели
-    """
+def generate_local(messages: List[Dict], max_new_tokens: int = 128) -> Tuple[str, int, int, int]:
     model, tokenizer = load_llm()
-
-    text = tokenizer.apply_chat_template(
-        messages,
-        tokenize=False,
-        add_generation_prompt=True,
-    )
-
-    model_inputs = tokenizer([text], return_tensors="pt").to(model.device)
-
+    text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    inputs = tokenizer([text], return_tensors="pt").to(model.device)
+    input_tokens = inputs.input_ids.shape[1]
     with torch.no_grad():
-        generated_ids = model.generate(
-            **model_inputs,
-            max_new_tokens=max_new_tokens,
-            do_sample=False,
-        )
+        generated_ids = model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False)
+    output_ids = generated_ids[0][inputs.input_ids.shape[1]:]
+    output_tokens = len(output_ids)
+    response = tokenizer.decode(output_ids, skip_special_tokens=True).strip()
+    return response, input_tokens, 0, output_tokens
 
-    generated_ids = [
-        output_ids[len(input_ids):]
-        for input_ids, output_ids in zip(
-            model_inputs.input_ids, generated_ids
-        )
-    ]
+async def generate_server(messages: List[Dict], max_tokens: int = 256, response_format: Optional[dict] = None) -> Tuple[str, int, int, int]:
+    try:
+        kwargs = {
+            "model": AZURE_DEPLOYMENT,
+            "messages": messages,
+            "temperature": 0,
+            "max_tokens": max_tokens,
+        }
+        if response_format:
+            kwargs["response_format"] = response_format
+        response = await azure_client.chat.completions.create(**kwargs)
+        content = response.choices[0].message.content.strip()
+        usage = response.usage
+        prompt_tokens = usage.prompt_tokens
+        cached = 0
+        if hasattr(usage, 'prompt_tokens_details') and usage.prompt_tokens_details:
+            cached = getattr(usage.prompt_tokens_details, 'cached_tokens', 0)
+        non_cached = prompt_tokens - cached
+        output_tokens = usage.completion_tokens
+        return content, non_cached, cached, output_tokens
+    except Exception as e:
+        print(f"[LLM] Azure error: {e}")
+        return "", 0, 0, 0
 
-    return tokenizer.batch_decode(
-        generated_ids, skip_special_tokens=True
-    )[0].strip()
-
-
-def generate_server(messages: List[Dict], max_tokens: int = 256, retries: int = 2) -> str:
-    """
-    Генерация ответа через Azure OpenAI (GPT-5).
-
-    Args:
-        messages: список сообщений
-        max_tokens: максимум токенов
-        retries: количество повторных попыток
-
-    Returns:
-        str: ответ модели
-    """
-    for attempt in range(retries):
-        try:
-            response = azure_client.chat.completions.create(
-                model=AZURE_DEPLOYMENT,
-                messages=messages,
-                temperature=0,
-                top_p=1,
-                max_tokens=max_tokens,
-            )
-
-            content = response.choices[0].message.content
-
-            if content:
-                return content.strip()
-
-        except Exception as e:
-            print(f"[LLM] Azure error (attempt {attempt+1}): {e}")
-            time.sleep(1)
-
-    return ""
-
-
-def generate_llm(messages: List[Dict], max_new_tokens: int = 256) -> str:
-    """
-    Унифицированный интерфейс генерации.
-
-    Автоматически выбирает:
-    - server -> GPT
-    - local -> Qwen
-
-    Args:
-        messages: список сообщений
-        max_new_tokens: длина ответа
-
-    Returns:
-        str: ответ модели
-    """
+async def generate_llm(messages: List[Dict], max_new_tokens: int = 256, response_format: Optional[dict] = None) -> str:
     if LLM_MODE == "server":
-        return generate_server(messages, max_tokens=max_new_tokens)
-
+        content, non_cached, cached, out = await generate_server(messages, max_tokens=max_new_tokens, response_format=response_format)
+        token_stats.add(non_cached, cached, out)
+        return content
     elif LLM_MODE == "local":
-        return generate_local(messages, max_new_tokens=max_new_tokens)
-
+        loop = asyncio.get_event_loop()
+        content, inp, cached, out = await loop.run_in_executor(None, lambda: generate_local(messages, max_new_tokens))
+        token_stats.add(inp, cached, out)
+        return content
     else:
         raise ValueError(f"Unknown LLM_MODE: {LLM_MODE}")

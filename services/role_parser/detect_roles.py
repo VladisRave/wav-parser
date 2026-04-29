@@ -7,274 +7,196 @@ from llm import generate_llm
 MAX_DIALOG_CHARS = 6000
 
 # ПРОМПТЫ
-ROLE_PROMPT = """    Определи роль каждого Speaker в диалоге.
+ROLE_PROMPT = """
+Задача: Определи роль каждого Speaker в диалоге.
 
-    Возможные роли:
-    - USER — клиент, который звонит в компанию
-    - ASSISTANT — сотрудник компании (оператор)
-    - ROBOT — автоответчик или IVR-система
+Возможные роли:
+- USER — клиент, звонит в компанию, решает свою проблему.
+- ASSISTANT — сотрудник компании (оператор), помогает клиенту.
+- ROBOT — автоответчик или IVR-система.
 
-    ФОРМАТ ОТВЕТА:
-    Верни только JSON:
-    {"Speaker 0": "ROLE", "Speaker 1": "ROLE", ...}
+Правила определения для каждой роли.
 
-    ОБЩИЕ ПРАВИЛА:
-    - Количество Speaker в ответе должно совпадать с входом
-    - Анализируй все реплики каждого Speaker
-    - Без пояснений, только JSON
+Шаблонные фразы ROBOT: 
+- «вы позвонили», «разговор может быть записан»
+- «ожидайте», «оставайтесь на линии», «ваш номер в очереди»
+- «соединяю с оператором»
 
-    ОПРЕДЕЛЕНИЕ РОЛЕЙ:
+Шаблонные фразы ASSISTANT:
+- Представляется оператором: «я оператор», «служба поддержки»
+- Задаёт вопросы, помогает решить проблему, ведёт диалог
+- Отвечает на запросы клиента
 
-    ROBOT:
-    - шаблонные системные фразы
-    - "вы позвонили", "разговор может быть записан"
-    - "ожидайте", "оставайтесь на линии"
-    - "ваш номер в очереди"
-    - "соединяю с оператором"
+Шаблонные фразы USER:
+- Описывает проблему: «у меня», «мне нужно», «я не могу»
+- Задаёт вопросы о тесте, оплате, доставке, результатах
+- **Может просить робота или оператора:** «свяжите с оператором», «переключите на оператора»
+- Никогда не представляется сотрудником компании
 
-    ASSISTANT:
-    - сотрудник компании
-    - представляется как сотрудник или оператор
-    - говорит: "я оператор", "служба поддержки"
-    - задаёт вопросы и помогает решить проблему
-    - ведёт диалог
+Критические правила:
+- Фразы «я звоню от компании», «я оператор», «служба поддержки» - ASSISTANT
+- Описание проблемы клиентом -> USER
+- Если в начале диалог похож на ROBOT, но дальше идёт живой диалог -> ASSISTANT
 
-    USER:
-    - клиент, который обращается за услугой
-    - говорит о своей проблеме
-    - использует: "у меня", "мне нужно", "я не могу"
-    - задаёт вопросы о тесте, оплате, доставке, результатах
-    - не представляет себя сотрудником
+Список примеров:
+Пример 1
+Speaker 0: Алло  
+Speaker 1: Меня зовут Денис, я звоню от компании  
+Ответ: {"Speaker 0": "USER", "Speaker 1": "ASSISTANT"}
 
-    КРИТИЧЕСКОЕ ПРАВИЛО:
-    - если человек говорит "я звоню от компании", "я оператор", "служба поддержки" - это ASSISTANT
-    - если человек описывает свою проблему - это USER
+Пример 2
+Speaker 0: Служба поддержки, слушаю  
+Speaker 1: У меня проблема  
+Ответ: {"Speaker 0": "ASSISTANT", "Speaker 1": "USER"}
 
-    РАЗРЕШЕНИЕ КОНФЛИКТОВ:
-    - если сначала похоже на автоответчик, но дальше идёт диалог - ASSISTANT
+Пример 3
+Speaker 0: Вы позвонили в компанию. Ожидайте ответа от оператора  
+Speaker 1: Здравствуйте, хочу вернуть деньги  
+Ответ: {"Speaker 0": "ROBOT", "Speaker 1": "USER"}
 
-    ПРИМЕРЫ:
+Пример 4 (запрос соединить с оператором)
+Speaker 0: Повторите, что вы хотите, чтобы я связал вас с оператором.  
+Speaker 1: Да  
+Ответ: {"Speaker 0": "USER", "Speaker 1": "ROBOT"}
 
-    Speaker 0: Алло
-    Speaker 1: Меня зовут Денис, я звоню от компании
-    Ответ: {"Speaker 0": "USER", "Speaker 1": "ASSISTANT"}
-
-    Speaker 0: Служба поддержки, слушаю
-    Speaker 1: У меня проблема
-    Ответ: {"Speaker 0": "ASSISTANT", "Speaker 1": "USER"}
-
-    Speaker 0: Вы позвонили в компанию. Ожидайте ответа от оператора
-    Speaker 1: Здравствуйте, хочу вернуть деньги
-    Ответ: {"Speaker 0": "ROBOT", "Speaker 1": "USER"}
-
-    Теперь определи роли для следующего диалога:
-
-    Ответ должен быть:
-    - Только JSON
-    - Без пояснений
-    - Без markdown
-    - Без ```json
+Ответ только в JSON
 """
 
-OPERATOR_USER_PROMPT = """Ты система контроля качества диалогов колл-центра медицинской лаборатории.
+COMBINED_VALIDATION_PROMPT = """
+Ты система контроля качества диалогов колл-центра медицинской лаборатории.
 
-На входе — диалог с уже размеченными ролями:
-USER, ASSISTANT, ROBOT.
+На вход подаются:
+1. Диалог с уже размеченными ролями (USER, ASSISTANT, ROBOT)
+2. Отдельно — только реплики USER (пациента)
 
-Задача:
-Проверить корректность разметки и определить:
-True — диалог корректный
-False — есть ошибки
+Твоя задача — выполнить две независимые проверки и вернуть JSON-объект с результатами.
 
-КРИТЕРИИ FALSE:
+ПРОВЕРКА 1: КОРРЕКТНОСТЬ РОЛЕЙ USER/ASSISTANT (результат: roles_valid)
 
-1. Ошибка ролей:
-- USER ведёт себя как оператор (представляется, говорит "я оператор", "служба поддержки", "звоню вам от компании")
-- ASSISTANT ведёт себя как клиент (жалобы, "у меня проблема", "мой тест", "верните деньги")
+Верни true, если:
+- USER задаёт вопросы о тесте, результатах, доставке, оплате, семейную историю, описывает свою проблему.
+- ASSISTANT — сотрудник лаборатории, отвечает на вопросы, уточняет данные, помогает решить проблему, ведёт диалог.
+- USER может просить соединить с оператором — это норма.
 
-2. Невозможность понять роли:
-- роли противоречат друг другу
-- диалог выглядит случайно размеченным
+Верни false, если:
+- USER ведёт себя как оператор: представляется, говорит "я оператор", "служба поддержки", "звоню вам от компании".
+- ASSISTANT ведёт себя как клиент: жалуется, говорит "у меня проблема", "мой тест", "верните деньги".
+- Роли противоречат друг другу.
 
-3. ASSISTANT не выполняет роль оператора:
-- не отвечает на вопросы
-- не разъясняет проблему
-- не помогает пользователю
+Главное - не суди по первой фразе, анализируй весь диалог.
 
-КРИТЕРИИ TRUE:
+ПРОВЕРКА 2: КАЧЕСТВО ТЕКСТА USER (результат: quality_ok)
 
-USER:
-- задаёт вопросы о тесте, результатах, доставке, оплате
-- может обсуждать генетику, родословную, семейную историю
-- описывает свою проблему
+Анализируй только реплики USER.
 
-ASSISTANT:
-- сотрудник лаборатории
-- отвечает на вопросы
-- уточняет данные
-- помогает решить проблему
-- ведёт диалог
+Верни false, если ЕСТЬ ХОТЯ БЫ ОДНО ИЗ:
+1. Чужой тест: "тест моего сына/дочери/мужа/жены/друга", "это не мой анализ", "результат другого человека", "я за другого звоню".
+2. Смена рода у одного человека в течение диалога: "я заказал" -> "я заказала", "я сдал" -> "я сдала".
+3. Путаница с личностью: "это мой тест?", "возможно перепутали", "не уверен, что мои результаты".
 
-ВАЖНО:
-- обсуждение семьи, генетики, родословной — НОРМАЛЬНЫЙ USER сценарий
-- не считать ошибкой
+Верни true в остальных случаях, включая:
+- Обсуждение родословной, семейного дерева, наследственных заболеваний, рассказы о родственниках.
+- Решение проблем с регистрацией пробирки, сбора генетического материала или контактной информации.
+- Если не уверен — ставь true.
 
-ПРАВИЛА:
-- не суди по первой фразе
-- анализируй весь диалог
-- роль определяется поведением, а не приветствием
+ФОРМАТ ОТВЕТА
 
-ФОРМАТ ОТВЕТА:
-True или False (одно слово)
+Верни только JSON, строго по схеме:
+{"roles_valid": true/false, "quality_ok": true/false}
+
+Примеры:
+{"roles_valid": true, "quality_ok": true}
+{"roles_valid": false, "quality_ok": true}
+{"roles_valid": true, "quality_ok": false}
+{"roles_valid": false, "quality_ok": false}
 """
 
-QUALITY_PROMPT = """Ты система контроля качества для генетической лаборатории.
 
-На входе — только реплики пациента (USER).
+# JSON SCHEMA ДЛЯ ВАЛИДАЦИИ (строгий режим)
+VALIDATION_RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "validation_result",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "roles_valid": {"type": "boolean"},
+                "quality_ok": {"type": "boolean"}
+            },
+            "required": ["roles_valid", "quality_ok"],
+            "additionalProperties": False
+        }
+    }
+}
 
-Задача:
-решить — оставить диалог (True) или отбросить (False)
 
-FALSE ЕСЛИ:
+async def detect_roles(dialog_text: str) -> dict:
+    if len(dialog_text) > MAX_DIALOG_CHARS:
+        dialog_text = dialog_text[:MAX_DIALOG_CHARS]
+    prompt = ROLE_PROMPT + "\n\n" + dialog_text
+    messages = [
+        {"role": "system", "content": "Ты классифицируешь роли. Ответь только JSON, без пояснений."},
+        {"role": "user", "content": prompt}
+    ]
+    response = await generate_llm(messages, max_new_tokens=256)
+    try:
+        data = json.loads(response)
+        # фильтруем только спикеров с допустимыми ролями
+        filtered = {k: v for k, v in data.items() if v in ("USER", "ASSISTANT", "ROBOT")}
+        return filtered
+    except:
+        return {}
 
-1. Чужой тест:
-- "тест моего сына/дочери/мужа/жены/друга"
-- "это не мой анализ"
-- "перепутали анализ"
-- "результат другого человека"
-- "я за другого звоню"
-
-ИСКЛЮЧЕНИЕ:
-если это цитата другого человека — не считать ошибкой
-
-2. Смена рода во время разговора:
-- "я заказал" -> "я заказала"
-- "я сдал" -> "я сдала"
-- любая смена рода у одного человека
-
-3. Путаница с личностью:
-- "это мой тест?"
-- "возможно перепутали"
-- "не уверен что мои результаты"
-
-TRUE ВСЕГДА:
-
-4. Семья и генеалогия (разрешено):
-- обсуждение родословной
-- семейное дерево
-- наследственные заболевания
-- рассказы про родственников (родителей, детей, бабушек, дедушек)
-
-ВАЖНО:
-- семейная информация не является причиной для False
-- даже если обсуждаются родственники — это нормальный сценарий
-- исключение только смена рода или чужой тест
-
-ПРАВИЛА:
-- анализируй весь текст
-- только реплики пациента
-- если не уверен → True
-
-ФОРМАТ:
-True или False (одно слово)
-"""
-
-def _clean_json(text: str) -> str:
-    """Очистка вывода LLM от markdown и лишних пробелов."""
-    if not isinstance(text, str):
-        return ""
-    text = text.strip()
-    text = re.sub(r"^```json\s*", "", text)
-    text = re.sub(r"^```\s*", "", text)
-    text = re.sub(r"\s*```$", "", text)
-    return text.strip()
-
-def validate_operator_user(dialog_text: str, roles_dict: dict) -> bool:
-    """Проверка корректности ролей USER и ASSISTANT."""
-    labeled_dialog = []
+async def validate_combined(dialog_text: str, roles_dict: dict, user_text: str) -> tuple[bool, bool]:
+    # строим размеченный диалог
+    labeled_lines = []
     for line in dialog_text.splitlines():
         line = line.strip()
         if not line:
             continue
         for speaker, role in roles_dict.items():
             if line.startswith(f"{speaker}:"):
-                labeled_dialog.append(f"{role}: {line.split(':', 1)[1].strip()}")
+                labeled_lines.append(f"{role}: {line.split(':', 1)[1].strip()}")
                 break
+    labeled_dialog = "\n".join(labeled_lines)
 
-    labeled_text = "\n".join(labeled_dialog)
-    prompt = OPERATOR_USER_PROMPT + "\n\nДиалог:\n" + labeled_text
-
-    messages = [
-        {"role": "system", "content": "Ты проверяешь корректность ролей. Отвечай только True или False."},
-        {"role": "user", "content": prompt}
-    ]
-
-    response = generate_llm(messages)
-    print("DEBUG response:", response)
-    cleaned = _clean_json(response).strip().lower()
-    return cleaned == "true"
-
-def detect_roles(dialog_text: str):
-    """Определение ролей спикеров в диалоге."""
-    if len(dialog_text) > MAX_DIALOG_CHARS:
-        dialog_text = dialog_text[:MAX_DIALOG_CHARS]
-
-    prompt = ROLE_PROMPT + "\n\nТеперь определи роли для следующего диалога:\n" + dialog_text
-
-    messages = [
-        {"role": "system", "content": "Ты строго классифицируешь роли в диалоге. Отвечай только JSON."},
-        {"role": "user", "content": prompt}
-    ]
-
-    response = generate_llm(messages)
-    cleaned = _clean_json(response)
-
-    try:
-        data = json.loads(cleaned)
-        # Проверяем, что все значения — допустимые роли
-        for k, v in data.items():
-            if v not in ("USER", "ASSISTANT", "ROBOT"):
-                return {}
-        return data
-    except Exception:
-        return {}
-
-def quality_control(user_text: str) -> bool:
-    """Проверка качества текста пациента."""
+    if len(labeled_dialog) > MAX_DIALOG_CHARS:
+        labeled_dialog = labeled_dialog[:MAX_DIALOG_CHARS]
     if len(user_text) > MAX_DIALOG_CHARS:
         user_text = user_text[:MAX_DIALOG_CHARS]
 
-    prompt = QUALITY_PROMPT + "\n\nТекст для проверки:\n" + user_text
+    prompt = COMBINED_VALIDATION_PROMPT + f"""
 
-    messages = [  # <-- ИСПРАВЛЕНО: убрана лишняя буква t
-        {"role": "system", "content": "Ты фильтруешь данные для генетического анализа. Отвечай только True или False."},
+Диалог с ролями:
+{labeled_dialog}
+
+Реплики USER:
+{user_text}
+"""
+    messages = [
+        {"role": "system", "content": "Ты валидатор. Отвечай только JSON."},
         {"role": "user", "content": prompt}
     ]
-
-    response = generate_llm(messages)
-    cleaned = _clean_json(response).strip().lower()
-    if cleaned == "true":
-        return True
-    elif cleaned == "false":
-        return False
-    else:
-        # Неожиданный ответ – считаем False, чтобы не пропускать мусор
-        print(f"  ВНИМАНИЕ: quality_control вернул '{cleaned}', считаем False")
-        return False
+    response = await generate_llm(messages, max_new_tokens=128, response_format=VALIDATION_RESPONSE_FORMAT)
+    try:
+        data = json.loads(response)
+        return data.get("roles_valid", False), data.get("quality_ok", False)
+    except:
+        return False, False
 
 def extract_user_text(txt_content: str, user_speaker_label: str) -> str:
-    """Извлекает все реплики указанного спикера."""
     pattern = rf"^{re.escape(user_speaker_label)}:\s*(.*?)$"
     lines = txt_content.splitlines()
     user_lines = []
     for line in lines:
-        match = re.match(pattern, line.strip())
-        if match:
-            user_lines.append(match.group(1).strip())
+        m = re.match(pattern, line.strip())
+        if m:
+            user_lines.append(m.group(1).strip())
     return "\n".join(user_lines)
 
 def save_roles(output_file: Path, roles_dict: dict):
     output_file.parent.mkdir(parents=True, exist_ok=True)
     with open(output_file, "w", encoding="utf-8") as f:
         json.dump(roles_dict, f, ensure_ascii=False, indent=2)
-    print(f"Роли сохранены: {output_file}")
+    print(f"  Роли сохранены: {output_file}")

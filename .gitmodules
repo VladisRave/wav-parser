@@ -1,3 +1,6 @@
 [submodule "external/whisper-diarization"]
 	path = external/whisper-diarization
 	url = https://github.com/MahmoudAshraf97/whisper-diarization
+[submodule "external/voice-gender-classifier"]
+	path = external/voice-gender-classifier
+	url = https://github.com/JaesungHuh/voice-gender-classifier.git

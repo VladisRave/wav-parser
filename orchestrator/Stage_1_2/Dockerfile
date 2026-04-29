@@ -20,8 +20,6 @@ RUN pip install --no-cache-dir -U uv \
 # Копируем только необходимые исходники (НЕ весь проект)
 COPY services /app/services
 COPY orchestrator/Stage_1_2 /app/orchestrator/Stage_1_2
-# Если есть общие модули (utils, models) – добавьте их явно, например:
-# COPY utils /app/utils
 
 RUN chmod +x /app/orchestrator/Stage_1_2/run_stage.sh
 

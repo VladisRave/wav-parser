@@ -23,35 +23,51 @@ wav-parser/
 │   │   ├── model_loader.py
 │   │   ├── music_detector.py
 │   │   └── main.py
+│   │ 
 │   ├── denoise/                # шумоподавление
 │   │   ├── denoise.py
 │   │   └── main.py
+│   │ 
 │   ├── diarization/            # диаризация + транскрибация
 │   │   ├── model.py            # Whisper + NeMo MSDD
 │   │   ├── utils.py
 │   │   └── main.py
+│   │ 
 │   ├── role_parser/            # определение ролей через LLM
 │   │   ├── detect_roles.py
 │   │   ├── llm.py              # загрузка Qwen или ChatGPT
 │   │   └── main.py
+│   │ 
 │   ├── audio_separation/       # разделение аудио по ролям
 │   │   ├── audio_utils.py
 │   │   ├── splitter.py
 │   │   ├── srt_parser.py
 │   │   └── main.py
+│   │ 
 │   ├── voice_params/           # извлечение голосовых признаков
 │   │   ├── feature_extractor.py
 │   │   ├── file_utils.py
+│   │   ├── gender_control.py   # загрузка модели ECAPA_gender
 │   │   └── main.py
 │   └── vizualization/          # в процессе разработки
+│ 
 ├── external/
+│   ├── voice-gender-classifier
 │   └── whisper-diarization/    # субмодуль форка whisper-diarization
+│ 
 ├── orchestrator/               # Docker-сборка и оркестрация
-│   ├── Dockerfile
-│   ├── run_pipeline.sh
-│   └── docker-compose.yml      # описание двух сервисов: stage1 и stage2
-├── requirements.txt
-└── docker-compose.yml          # корневой compose (опционально)
+│   ├── Stage_1_2/ 
+│   │   ├── Docker
+│   │   ├── requirements.txt
+│   │   └── run_stage.sh
+│   │
+│   └── Stage_3_6/ 
+│       ├── Docker
+│       ├── requirements.txt
+│       └── run_stage.sh
+│  
+├── .env                        # переменные среды
+└── docker-compose.yml          # описание двух сервисов: stage1 и stage2
 ```
 
 ## Пайплайн: 6 шагов
@@ -119,6 +135,20 @@ wav-parser/
 
 **ChatGPT (через API):** не требует локальной VRAM, но необходим доступ к API и соответствующий ключ.
 
+### LLM для определения пола пользователя
+Для задачи определения пола говорящего используется модель ECAPA‑Gender (архитектура ECAPA‑TDNN), обученная на наборах голосовых данных для бинарной классификации (мужской/женский голос).
+Модель загружается из репозитория Hugging Face: JaesungHuh/voice-gender-classifier.
+
+Особенности:
+
+- Принимает на вход аудиофайл (WAV, моно, частота 16 кГц).
+- Возвращает метку: "male" или "female".
+- Работает в пайплайне после отделения голоса пользователя.
+
+Используется в pipeline как пост‑процессор для дальнейшего анализа данных (добавление колонки defined_gender в CSV с акустическими признаками).
+
+**Примечание:** при первом запуске модель автоматически загружается с Hugging Face Hub. Для работы в среде без интернета можно предварительно скачать веса и указать локальный путь.
+
 ## Требования к системе
 
 - **GPU (обязателен)** для шагов 3 (diarization) и 4 (role_parser). На CPU работа крайне медленная или невозможна.
@@ -134,7 +164,7 @@ wav-parser/
 Проект использует два изолированных контейнера из-за конфликта зависимостей:
 
 - **stage1** — шаги 1–2 (music_removal, denoise)
-- **stage2** — шаги 3–6 (diarization, role_parser, audio_separation, voice_params)
+- **stage2** — шаги 3–6 (diarization, role_parser, audio_separation, voice_params, gender_classification)
 
 Оба сервиса описаны в `orchestrator/docker-compose.yml`.
 
@@ -264,16 +294,18 @@ docker logs --tail 50 <container_name>
 - **GPU обязателен** для шагов 3 и 4. На CPU возможны зависания или экстремально медленная работа.
 - **Длинные транскрипции** (>6000 символов) обрезаются перед отправкой в LLM (для определения ролей достаточно начала разговора).
 - **OOM (out of memory)** на шаге 4 приводит к пропуску файла, но не останавливает обработку всей пачки.
-- **Дисковое пространство:** шаги 1–3 генерируют промежуточные WAV-файлы. Убедитесь, что достаточно места (минимум 10 ГБ свободно для обработки сотен файлов).
+- **Дисковое пространство:** шаги 1–5 генерируют промежуточные WAV-файлы. Убедитесь, что достаточно места (минимум 10 ГБ свободно для обработки сотен файлов).
 - **Конфликт зависимостей** между music_removal/denoise и остальными шагами решён разделением на два Docker-контейнера.
 
 ## Attribution
 
-Проект использует внешнюю реализацию диаризации:
+Проект использует следующие внешние реализации:
 
 [https://github.com/MahmoudAshraf97/whisper-diarization](https://github.com/MahmoudAshraf97/whisper-diarization)
 
-Все права на оригинальную реализацию принадлежат авторам. В проекте используется интеграция и модификации для пайплайна.
+[https://github.com/JaesungHuh/voice-gender-classifier](https://github.com/JaesungHuh/voice-gender-classifier)
+
+Все права на оригинальные реализации принадлежат авторам. В проекте используется интеграция и модификации для пайплайна.
 
 ---
 

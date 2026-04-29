@@ -1,0 +1,38 @@
+services:
+  stage1:
+    build:
+      context: .
+      dockerfile: orchestrator/Stage_1_2/Dockerfile
+    container_name: wav-stage1
+    gpus: all
+    env_file:
+      - .env
+    volumes:
+      - ${AUDIO_FOLDER}:/shared/input
+      - ${ROOT_FOLDER}:/shared
+    environment:
+      - INPUT_DIR=/shared/input
+      - WORK_DIR=/shared/work
+      - STATE_DIR=/shared/state
+      - LOG_DIR=/shared/logs
+    restart: "no"
+
+  stage2:
+    build:
+      context: .
+      dockerfile: orchestrator/Stage_3_6/Dockerfile
+    container_name: wav-stage2
+    gpus: all
+    env_file:
+      - .env
+    volumes:
+      - ${ROOT_FOLDER}:/shared
+    environment:
+      - WORK_DIR=/shared/work
+      - STATE_DIR=/shared/state
+      - LOG_DIR=/shared/logs
+    restart: "no"
+
+# Чтобы запустить один из двух контейнеров:
+# docker-compose run stage1(stage2)
+# docker-compose run --rm stage1(stage2)

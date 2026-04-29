@@ -2,25 +2,19 @@
 numpy==1.26.4
 pandas==2.3.3
 
+# Progress
+tqdm
+
 # Audio processing
 pydub==0.25.1
 librosa==0.11.0
 soundfile==0.13.1
-scipy==1.15.3
-
-# Speech parameters
 praat-parselmouth==0.4.7
 
-# DL/TORCH
+# DL / LLM
 bitsandbytes==0.49.2
-openai
+accelerate==1.13.0
+openai==2.32.0
 
-# Visualisation
-matplotlib==3.10.8
-seaborn==0.13.2
-
-# ML tools
-scikit-learn==1.7.2
-
-# Progress
-tqdm
+# Дополнительно для удобной работы с переменными окружения
+python-dotenv==1.0.0
