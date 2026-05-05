@@ -33,7 +33,7 @@ from helpers import (
 )
 from diarization import MSDDDiarizer
 
-WHISPER_MODEL = os.getenv("WHISPER_MODEL_SIZE")
+WHISPER_MODEL = os.getenv("WHISPER_MODEL_SIZE", "large-v3")
 BATCH_SIZE = 16
 LANGUAGE = "ru"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"

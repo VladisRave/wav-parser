@@ -4,14 +4,15 @@ import torch
 import asyncio
 from typing import List, Dict, Tuple, Optional
 from openai import AsyncAzureOpenAI
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
+# LLM_MODE = os.getenv("LLM_MODE", "local")
 LLM_MODE = os.getenv("LLM_MODE", "server")
 
 # Azure config
 AZURE_DEPLOYMENT = os.getenv("AZURE_DEPLOYMENT", "gpt-4.1")
-AZURE_ENDPOINT = os.getenv("AZURE_ENDPOINT")         
-AZURE_API_KEY = os.getenv("OPENAI_API_KEY")
+AZURE_ENDPOINT = os.getenv("AZURE_ENDPOINT", "https://lk-ai-assistant.openai.azure.com/")         
+AZURE_API_KEY = os.getenv("OPENAI_API_KEY", None)
 AZURE_API_VERSION = os.getenv("AZURE_API_VERSION", "2024-12-01-preview")
 
 # Цены за 1 миллион токенов
@@ -48,21 +49,22 @@ class TokenStats:
         }
 
 token_stats = TokenStats()
-
-azure_client = AsyncAzureOpenAI(
-    api_version=AZURE_API_VERSION,
-    azure_endpoint=AZURE_ENDPOINT,
-    api_key=AZURE_API_KEY,
-)
+if LLM_MODE == "server":
+    azure_client = AsyncAzureOpenAI(
+        api_version=AZURE_API_VERSION,
+        azure_endpoint=AZURE_ENDPOINT,
+        api_key=AZURE_API_KEY,
+    )
 
 # Локальная модель
-_LLM_MODEL = None
-_LLM_TOKENIZER = None
-quantization_config = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=torch.float16)
+if LLM_MODE == "local":
+    from transformers import BitsAndBytesConfig
+    _LLM_TOKENIZER = None
+    quantization_config = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=torch.float16)
 
 def load_llm():
-    global _LLM_MODEL, _LLM_TOKENIZER
-    if _LLM_MODEL is None:
+    global LLM_MODE, _LLM_TOKENIZER
+    if LLM_MODE == "local":
         print("[LLM] Loading local Qwen2.5-7B...")
         _LLM_TOKENIZER = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-7B-Instruct")
         _LLM_MODEL = AutoModelForCausalLM.from_pretrained(
