@@ -1,38 +1,56 @@
-FROM pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime
+FROM nvidia/cuda:12.1.0-runtime-ubuntu22.04
 
-# Окружение
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=Etc/UTC
 
+# Python 3.10 и системные зависимости
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3.10 \
+        python3-pip \
+        python3-dev \
+        git \
+        ffmpeg \
+        sox \
+        libsndfile1 \
+        build-essential \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -s /usr/bin/python3.10 /usr/local/bin/python \
+    && ln -s /usr/bin/python3.10 /usr/local/bin/python3
+
+RUN python -m pip install --upgrade pip setuptools wheel
+
 WORKDIR /app
 
-# 1. Копируем весь проект
+# Копируем requirements и удаляем оттуда упоминания torch
+# (чтобы не ставилась случайная версия)
+COPY external/whisper-diarization/requirements.txt /tmp/whisper-requirements.txt
+RUN sed -i '/torch/d' /tmp/whisper-requirements.txt
+
 COPY . /app
 
-# 2. Устанавливаем git
-RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+RUN if [ -d ".git" ]; then \
+        git submodule update --init --recursive; \
+    else \
+        echo "No .git found, assuming submodule content is already present"; \
+    fi
 
-# 3. Инициализируем submodules
-RUN git submodule update --init --recursive || true
+# 1. Зависимости whisper-diarization (без torch)
+RUN pip install --no-cache-dir -r /tmp/whisper-requirements.txt
 
-# 4. Устанавливаем зависимости строго по вашему алгоритму
-RUN pip install -r external/whisper-diarization/requirements.txt && \
-    pip install praat-parselmouth==0.4.7 openai && \
-    pip uninstall -y torch torchaudio torchvision && \
-    pip uninstall -y nvidia-cublas nvidia-cudnn nvidia-cuda-runtime nvidia-cusolver nvidia-cusparse || true && \
-    pip install torch==2.4.1+cu121 torchaudio==2.4.1+cu121 torchvision==0.19.1+cu121 \
-        --index-url https://download.pytorch.org/whl/cu121 && \
-    pip uninstall -y nemo-toolkit || true && \
-    pip install nemo-toolkit==2.6.0
+# 2. Дополнительные пакеты
+RUN pip install --no-cache-dir praat-parselmouth==0.4.7 openai
 
-# 5. Права на исполнение скрипта
-RUN chmod +x /app/orchestrator/run_pipeline.sh
-ENTRYPOINT ["/app/orchestrator/run_pipeline.sh"]
+# 3. Чистая установка нужного PyTorch (как у вас локально)
+RUN pip install --no-cache-dir \
+        torch==2.4.1+cu121 \
+        torchaudio==2.4.1+cu121 \
+        torchvision==0.19.1+cu121 \
+        --index-url https://download.pytorch.org/whl/cu121
 
-# # Как запускать первый Docktrfile
-# docker build --rm --force-rm --no-cache -t wav-stage2 -f orchestrator/Stage_3_6/Dockerfile .
+# 4. NeMo Toolkit (удаляем старый, если был, и ставим нужный)
+RUN pip uninstall -y nemo-toolkit || true \
+    && pip install --no-cache-dir nemo-toolkit==2.6.0
 
-# docker run --rm \
-#   -v $(pwd)/orchestrator/state:/shared/state \
-#   -v $(pwd)/audio:/data \
-#   wav-stage2
+RUN chmod +x /app/orchestrator/Stage_3_6/run_stage.sh
+
+ENTRYPOINT ["/app/orchestrator/Stage_3_6/run_stage.sh"]
